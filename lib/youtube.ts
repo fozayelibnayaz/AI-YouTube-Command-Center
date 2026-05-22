@@ -15,37 +15,24 @@ function parseDuration(duration: string): number {
   return h * 3600 + m * 60 + s;
 }
 
-// Deterministic analytics based on video id so values don't change between refreshes
-function hashCode(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
+// Engagement-based metrics derived from REAL data
+// These are calculations, NOT estimates - 100% real
+function calculateRealMetrics(views: number, likes: number, comments: number, duration: number) {
+  const engagementRate = views > 0 ? ((likes + comments) / views) * 100 : 0;
+  const likeRate = views > 0 ? (likes / views) * 100 : 0;
+  const commentRate = views > 0 ? (comments / views) * 100 : 0;
 
-function seededRandom(seed: number): number {
-  const x = Math.sin(seed) * 10000;
-  return x - Math.floor(x);
-}
-
-function generateMockAnalytics(views: number, duration: number, seedStr: string = "") {
-  const seed = hashCode(seedStr || String(views));
-  const r1 = seededRandom(seed);
-  const r2 = seededRandom(seed + 1);
-  const r3 = seededRandom(seed + 2);
-
-  const ctr = parseFloat((r1 * 8 + 1).toFixed(2));
-  const retention = parseFloat((r2 * 40 + 20).toFixed(1));
-  const avgDuration = Math.round((retention / 100) * duration);
   return {
-    ctr,
-    avg_view_percentage: retention,
-    avg_view_duration_seconds: avgDuration,
-    impressions: Math.round(views / (ctr / 100)),
-    watch_time_minutes: Math.round((avgDuration * views) / 60),
-    revenue_usd: parseFloat((views * 0.001 * (r3 * 3 + 1)).toFixed(2)),
+    engagement_rate: parseFloat(engagementRate.toFixed(3)),
+    like_rate: parseFloat(likeRate.toFixed(3)),
+    comment_rate: parseFloat(commentRate.toFixed(3)),
+    // These are NULL because YouTube Data API doesn't provide them
+    ctr: null,
+    avg_view_percentage: null,
+    avg_view_duration_seconds: null,
+    impressions: null,
+    watch_time_minutes: null,
+    revenue_usd: null,
   };
 }
 
@@ -56,12 +43,6 @@ const DEMO_CHANNEL = {
   totalViews: 1250000,
   videoCount: 87,
 };
-
-const DEMO_VIDEOS = [
-  { youtube_id: "demo1", title: "How AI is Changing Bangladesh in 2025", description: "Full breakdown...", thumbnail_url: "https://via.placeholder.com/480x360/ef4444/ffffff?text=AI", published_at: new Date(Date.now() - 7 * 86400000).toISOString(), tags: ["AI"], duration_seconds: 712, views: 125000, likes: 8500, comments: 432 },
-  { youtube_id: "demo2", title: "Top 10 AI Tools Every Creator MUST Use", description: "...", thumbnail_url: "https://via.placeholder.com/480x360/8b5cf6/ffffff?text=AI+Tools", published_at: new Date(Date.now() - 14 * 86400000).toISOString(), tags: ["AI Tools"], duration_seconds: 645, views: 89000, likes: 6200, comments: 287 },
-  { youtube_id: "demo3", title: "I Made $500 with AI in One Month", description: "...", thumbnail_url: "https://via.placeholder.com/480x360/10b981/ffffff?text=Money", published_at: new Date(Date.now() - 21 * 86400000).toISOString(), tags: ["AI"], duration_seconds: 788, views: 234000, likes: 15400, comments: 890 },
-];
 
 export async function getChannelInfo() {
   if (!isConfigured()) return { ...DEMO_CHANNEL, demo: true };
@@ -87,18 +68,12 @@ export async function getChannelInfo() {
   }
 }
 
-// Fetch ALL videos with pagination - YouTube limit is 50 per request
 export async function getChannelVideos(max = 500) {
   if (!isConfigured()) {
-    return DEMO_VIDEOS.map(v => ({
-      ...v,
-      analytics: generateMockAnalytics(v.views, v.duration_seconds, v.youtube_id),
-      demo: true,
-    }));
+    return [];
   }
 
   try {
-    // 1) Get uploads playlist
     const channelRes = await fetch(
       "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=" + CHANNEL_ID + "&key=" + API_KEY
     );
@@ -107,7 +82,6 @@ export async function getChannelVideos(max = 500) {
 
     const uploadsId = channelData.items[0].contentDetails.relatedPlaylists.uploads;
 
-    // 2) Paginate through ALL playlist items
     const allVideoIds: string[] = [];
     let nextPageToken: string | undefined = undefined;
     let safety = 0;
@@ -115,7 +89,6 @@ export async function getChannelVideos(max = 500) {
     do {
       const pageSize = Math.min(50, max - allVideoIds.length);
       if (pageSize <= 0) break;
-
       const tokenParam: string = nextPageToken ? "&pageToken=" + nextPageToken : "";
       const playlistRes = await fetch(
         "https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&playlistId=" +
@@ -123,16 +96,13 @@ export async function getChannelVideos(max = 500) {
       );
       const playlistData = await playlistRes.json();
       if (playlistData.error) throw new Error(playlistData.error.message);
-
       const ids = (playlistData.items || []).map((i: any) => i.contentDetails.videoId);
       allVideoIds.push(...ids);
-
       nextPageToken = playlistData.nextPageToken;
       safety++;
-      if (safety > 50) break; // hard cap = 2500 videos
+      if (safety > 50) break;
     } while (nextPageToken && allVideoIds.length < max);
 
-    // 3) Fetch video details in batches of 50
     const allVideos: any[] = [];
     for (let i = 0; i < allVideoIds.length; i += 50) {
       const batch = allVideoIds.slice(i, i + 50).join(",");
@@ -146,6 +116,9 @@ export async function getChannelVideos(max = 500) {
       for (const v of videoData.items || []) {
         const duration = parseDuration(v.contentDetails?.duration || "PT0S");
         const views = parseInt(v.statistics?.viewCount || "0");
+        const likes = parseInt(v.statistics?.likeCount || "0");
+        const comments = parseInt(v.statistics?.commentCount || "0");
+
         const video = {
           youtube_id: v.id,
           title: v.snippet.title,
@@ -155,13 +128,16 @@ export async function getChannelVideos(max = 500) {
           tags: v.snippet.tags || [],
           duration_seconds: duration,
           views,
-          likes: parseInt(v.statistics?.likeCount || "0"),
-          comments: parseInt(v.statistics?.commentCount || "0"),
+          likes,
+          comments,
         };
+
         allVideos.push({
           ...video,
-          analytics: generateMockAnalytics(views, duration, v.id),
+          analytics: calculateRealMetrics(views, likes, comments, duration),
           demo: false,
+          data_source: "youtube_data_api_v3",
+          metrics_note: "Views/Likes/Comments are 100% real. CTR/Retention require YouTube Analytics API (OAuth).",
         });
       }
     }
@@ -169,10 +145,6 @@ export async function getChannelVideos(max = 500) {
     return allVideos;
   } catch (e) {
     console.error("getChannelVideos error:", e);
-    return DEMO_VIDEOS.map(v => ({
-      ...v,
-      analytics: generateMockAnalytics(v.views, v.duration_seconds, v.youtube_id),
-      demo: true,
-    }));
+    return [];
   }
 }
