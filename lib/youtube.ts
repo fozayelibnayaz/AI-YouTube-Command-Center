@@ -23,14 +23,10 @@ function calculateRealEngagement(views: number, likes: number, comments: number)
 }
 
 const DEMO_CHANNEL = {
-  title: "Demo YouTube Channel",
-  thumbnail: "",
-  subscribers: 45200,
-  totalViews: 1250000,
-  videoCount: 87,
+  title: "Demo YouTube Channel", thumbnail: "",
+  subscribers: 45200, totalViews: 1250000, videoCount: 87,
 };
 
-// Priority: User-selected channel from Supabase > env default
 async function getActiveChannelId(): Promise<string> {
   try {
     const stored = await getStoredChannelId();
@@ -41,7 +37,6 @@ async function getActiveChannelId(): Promise<string> {
 
 export async function getChannelInfo() {
   if (!isApiConfigured()) return { ...DEMO_CHANNEL, demo: true };
-
   const channelId = await getActiveChannelId();
   if (!channelId || channelId.includes("your_")) return { ...DEMO_CHANNEL, demo: true };
 
@@ -51,10 +46,7 @@ export async function getChannelInfo() {
       { next: { revalidate: 600 } }
     );
     const data = await res.json();
-    if (data.error || !data.items?.length) {
-      console.error("Channel fetch error:", data.error);
-      throw new Error("Channel not found: " + channelId);
-    }
+    if (data.error || !data.items?.length) throw new Error("Channel not found: " + channelId);
     const ch = data.items[0];
     return {
       title: ch.snippet.title,
@@ -62,18 +54,15 @@ export async function getChannelInfo() {
       subscribers: parseInt(ch.statistics.subscriberCount || "0"),
       totalViews: parseInt(ch.statistics.viewCount || "0"),
       videoCount: parseInt(ch.statistics.videoCount || "0"),
-      channel_id: channelId,
-      demo: false,
+      channel_id: channelId, demo: false,
     };
   } catch (e) {
-    console.error("getChannelInfo error:", e);
     return { ...DEMO_CHANNEL, demo: true, error: String(e) };
   }
 }
 
-export async function getChannelVideos(max = 500) {
+export async function getChannelVideos(max = 500, daysBack: number = 90) {
   if (!isApiConfigured()) return [];
-
   const channelId = await getActiveChannelId();
   if (!channelId || channelId.includes("your_")) return [];
 
@@ -83,7 +72,6 @@ export async function getChannelVideos(max = 500) {
     );
     const channelData = await channelRes.json();
     if (channelData.error) throw new Error(channelData.error.message);
-    if (!channelData.items?.length) throw new Error("No channel data");
 
     const uploadsId = channelData.items[0].contentDetails.relatedPlaylists.uploads;
 
@@ -131,9 +119,7 @@ export async function getChannelVideos(max = 500) {
           published_at: v.snippet.publishedAt,
           tags: v.snippet.tags || [],
           duration_seconds: duration,
-          views,
-          likes,
-          comments,
+          views, likes, comments,
           analytics: calculateRealEngagement(views, likes, comments),
           demo: false,
           has_real_analytics: false,
@@ -141,25 +127,29 @@ export async function getChannelVideos(max = 500) {
       }
     }
 
-    // Try to enrich with REAL Analytics if OAuth available (won't break if it fails)
+    // Enrich with REAL Analytics if OAuth available
     try {
       const token = await getValidAccessToken();
       if (token) {
-        const realAnalytics = await getBatchVideoAnalytics(allVideoIds, 90);
+        const realAnalytics = await getBatchVideoAnalytics(allVideoIds, daysBack);
         for (const v of allVideos) {
           const real = realAnalytics[v.youtube_id];
           if (real) {
             v.analytics = {
               ...v.analytics,
-              ctr: real.ctr,
-              impressions: real.impressions,
-              avg_view_percentage: real.averageViewPercentage ? parseFloat(real.averageViewPercentage.toFixed(2)) : null,
-              avg_view_duration_seconds: real.averageViewDuration || null,
-              watch_time_minutes: real.estimatedMinutesWatched || null,
-              shares: real.shares || 0,
-              subscribers_gained: real.subscribersGained || 0,
+              ctr: real.ctr ?? null,
+              impressions: real.impressions ?? null,
+              avg_view_percentage: real.averageViewPercentage != null
+                ? parseFloat(real.averageViewPercentage.toFixed(2))
+                : null,
+              avg_view_duration_seconds: real.averageViewDuration ?? null,
+              watch_time_minutes: real.estimatedMinutesWatched ?? null,
+              shares: real.shares ?? 0,
+              subscribers_gained: real.subscribersGained ?? 0,
+              analytics_period_days: daysBack,
             };
-            v.has_real_analytics = true;
+            // Mark as REAL if we have ANY real data
+            v.has_real_analytics = !!(real.averageViewPercentage != null || real.estimatedMinutesWatched != null || real.ctr != null);
           }
         }
       }

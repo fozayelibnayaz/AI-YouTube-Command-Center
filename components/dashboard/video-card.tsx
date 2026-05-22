@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { formatNumber, formatDuration, getCTRRating, getRetentionRating, getEngagementRating, getViewsPerDayRating } from "@/lib/utils";
+import { formatNumber, formatDuration, getCTRRating, getRetentionRating, getEngagementRating } from "@/lib/utils";
 import { Eye, ThumbsUp, MessageSquare, Clock, Brain, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, Lock } from "lucide-react";
 
 interface Props {
@@ -18,11 +18,12 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
   const likes = video.likes || 0;
   const comments = video.comments || 0;
   const score = video.score || 0;
+  const ctr = video.ctr; // can be null, 0, or a real number
+  const retention = video.avg_view_percentage;
+  const hasRealCTR = ctr !== null && ctr !== undefined;
+  const hasRealRetention = retention !== null && retention !== undefined;
   const hasRealAnalytics = video.has_real_analytics === true;
-  const ctr = video.ctr; // null when no OAuth
-  const retention = video.avg_view_percentage; // null when no OAuth
 
-  // Real calculated metrics (always available)
   const engRate = views > 0 ? ((likes + comments) / views) * 100 : 0;
   const daysSince = video.published_at
     ? Math.max(1, (Date.now() - new Date(video.published_at).getTime()) / 86400000)
@@ -30,7 +31,6 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
   const viewsPerDay = views / daysSince;
 
   const engRating = getEngagementRating(engRate);
-  const vpdRating = getViewsPerDayRating(viewsPerDay);
 
   const scoreColor = score >= 70 ? "text-green-400 bg-green-500/10 border-green-500/30"
                    : score >= 50 ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
@@ -69,9 +69,7 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
             <span className="text-[10px] sm:text-xs text-gray-400">
               Eng <span className={engRating.color}>{engRate.toFixed(2)}%</span>
             </span>
-            <span className="text-[10px] sm:text-xs text-gray-400">
-              {Math.round(viewsPerDay)}/day
-            </span>
+            <span className="text-[10px] sm:text-xs text-gray-400">{Math.round(viewsPerDay)}/day</span>
             {hasRealAnalytics && (
               <span className="text-[9px] sm:text-[10px] bg-green-500/10 text-green-400 px-1 py-0.5 rounded border border-green-500/20">REAL DATA</span>
             )}
@@ -79,19 +77,17 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
         </div>
       </div>
 
-      {/* Stats Grid - 4 columns of REAL data */}
       <div className="grid grid-cols-4 gap-0 border-t border-white/5">
         {[
           { label: "Views", value: formatNumber(views), icon: <Eye size={10} />, color: "text-blue-400" },
           { label: "Likes", value: formatNumber(likes), icon: <ThumbsUp size={10} />, color: "text-green-400" },
           { label: "Comments", value: formatNumber(comments), icon: <MessageSquare size={10} />, color: "text-purple-400" },
           {
-            label: "Watch Time",
-            value: hasRealAnalytics && video.watch_time_minutes
+            label: hasRealAnalytics && video.watch_time_minutes != null ? "Watch Min" : "Views/Day",
+            value: hasRealAnalytics && video.watch_time_minutes != null
               ? Math.round(video.watch_time_minutes) + "m"
               : Math.round(viewsPerDay) + "/d",
-            icon: <Clock size={10} />,
-            color: "text-yellow-400"
+            icon: <Clock size={10} />, color: "text-yellow-400"
           },
         ].map(m => (
           <div key={m.label} className="flex flex-col items-center py-2 sm:py-3 border-r border-white/5 last:border-r-0">
@@ -104,19 +100,27 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
         ))}
       </div>
 
-      {/* Performance bars - CONDITIONALLY show CTR/Retention only if REAL data exists */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 p-3 sm:p-4 border-t border-white/5">
-        {/* CTR Section - Real or Locked */}
-        {hasRealAnalytics && ctr !== null && ctr !== undefined ? (
+        {/* CTR - Show real if available, else "Need impressions" message */}
+        {hasRealCTR ? (
           <PerformanceBar
-            label="CTR"
-            badge="✓ REAL"
+            label="CTR" badge="✓ REAL"
             rating={getCTRRating(ctr)}
-            value={ctr}
-            max={10}
+            value={ctr} max={10}
             colorThresholds={{ good: 7, ok: 4 }}
             displayValue={ctr.toFixed(2) + "%"}
           />
+        ) : hasRealAnalytics ? (
+          <div className="bg-black/20 rounded-lg p-2 sm:p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] sm:text-xs text-gray-400">CTR</span>
+              <span className="text-[10px] sm:text-xs text-gray-500">Not enough impressions</span>
+            </div>
+            <div className="w-full bg-white/5 rounded-full h-1.5">
+              <div className="h-1.5 rounded-full bg-gray-700" style={{ width: "100%" }} />
+            </div>
+            <p className="text-[10px] sm:text-xs text-gray-600 mt-1 truncate">YouTube hasn't shown impressions yet</p>
+          </div>
         ) : (
           <div className="bg-black/20 rounded-lg p-2 sm:p-3">
             <div className="flex items-center justify-between mb-1">
@@ -132,24 +136,20 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
           </div>
         )}
 
-        {/* Retention - Real or Engagement Rate fallback */}
-        {hasRealAnalytics && retention !== null && retention !== undefined ? (
+        {/* Retention OR Engagement fallback */}
+        {hasRealRetention ? (
           <PerformanceBar
-            label="Retention"
-            badge="✓ REAL"
+            label="Retention" badge="✓ REAL"
             rating={getRetentionRating(retention)}
-            value={retention}
-            max={60}
+            value={retention} max={60}
             colorThresholds={{ good: 40, ok: 25 }}
             displayValue={retention.toFixed(1) + "%"}
           />
         ) : (
           <PerformanceBar
-            label="Engagement"
-            badge="calc"
+            label="Engagement" badge="calc"
             rating={engRating}
-            value={engRate}
-            max={10}
+            value={engRate} max={10}
             colorThresholds={{ good: 5, ok: 2 }}
             displayValue={engRate.toFixed(2) + "%"}
           />
@@ -163,7 +163,6 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
             <span className="font-medium">AI Analysis</span>
             {expanded ? <ChevronUp size={14} className="ml-auto" /> : <ChevronDown size={14} className="ml-auto" />}
           </button>
-
           {expanded && (
             <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-3">
               {analysis.issues?.length > 0 && (
@@ -179,7 +178,6 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
                   ))}
                 </div>
               )}
-
               {analysis.strengths?.length > 0 && (
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-green-400 flex items-center gap-1">
@@ -190,7 +188,6 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
                   ))}
                 </div>
               )}
-
               {analysis.ai && (
                 <div className="space-y-2">
                   {analysis.ai.main_reason && <AIBlock c="purple" l="WHY" t={analysis.ai.main_reason} />}
@@ -208,7 +205,6 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
                   {analysis.ai.next_video_advice && <AIBlock c="pink" l="NEXT VIDEO" t={analysis.ai.next_video_advice} />}
                 </div>
               )}
-
               {analysis.recommendations?.length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-orange-400 mb-2">RECOMMENDATIONS</p>
@@ -247,8 +243,7 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
         </button>
         <a
           href={"https://youtube.com/watch?v=" + video.youtube_id}
-          target="_blank"
-          rel="noopener noreferrer"
+          target="_blank" rel="noopener noreferrer"
           className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 text-xs"
         >
           <Eye size={12} /> Watch

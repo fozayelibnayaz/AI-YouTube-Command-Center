@@ -7,8 +7,18 @@ import { calculatePerformanceScore, formatNumber } from "@/lib/utils";
 import {
   Eye, Users, Heart, MessageSquare, TrendingUp, Clock,
   Bell, RefreshCw, Trophy, AlertTriangle, Brain, BarChart3, Zap,
-  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send
+  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send, Calendar
 } from "lucide-react";
+
+const DATE_RANGES = [
+  { label: "7 Days", days: 7 },
+  { label: "28 Days", days: 28 },
+  { label: "Last Month", days: 30 },
+  { label: "3 Months", days: 90 },
+  { label: "6 Months", days: 180 },
+  { label: "1 Year", days: 365 },
+  { label: "All Time", days: 3650 },
+];
 
 export default function DashboardPage() {
   const [data, setData] = useState<any>(null);
@@ -24,19 +34,19 @@ export default function DashboardPage() {
   const [showEvents, setShowEvents] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [hasRealData, setHasRealData] = useState(false);
+  const [dateRange, setDateRange] = useState(90);
 
-  async function fetchData() {
+  async function fetchData(days: number = dateRange) {
     setLoading(true);
     try {
       const [chRes, vidRes] = await Promise.all([
         fetch("/api/youtube?action=channel"),
-        fetch("/api/youtube?action=videos&max=500"),
+        fetch("/api/youtube?action=videos&max=500&days=" + days),
       ]);
       const ch = await chRes.json();
       const vid = await vidRes.json();
       const subs = ch.data?.subscribers || 1000;
 
-      // Calculate scores using REAL CTR/Retention if available
       const videos = (vid.data || []).map((v: any) => ({
         ...v, ...(v.analytics || {}),
         score: calculatePerformanceScore({
@@ -56,16 +66,16 @@ export default function DashboardPage() {
       const totalWatchTime = videos.reduce((s: number, v: any) => s + (v.watch_time_minutes || 0), 0);
       const avgEng = totalViews > 0 ? ((totalLikes + totalComments) / totalViews) * 100 : 0;
 
-      const realVids = videos.filter((v: any) => v.ctr !== null && v.ctr !== undefined);
-      const avgCTR = realVids.length > 0 ? realVids.reduce((s: number, v: any) => s + (v.ctr || 0), 0) / realVids.length : null;
-      const avgRetention = realVids.length > 0
-        ? realVids.filter((v: any) => v.avg_view_percentage !== null).reduce((s: number, v: any) => s + (v.avg_view_percentage || 0), 0) / realVids.length
-        : null;
+      // Only include videos that have non-null CTR/Retention in averages
+      const ctrVids = videos.filter((v: any) => v.ctr !== null && v.ctr !== undefined);
+      const retVids = videos.filter((v: any) => v.avg_view_percentage !== null && v.avg_view_percentage !== undefined);
+      const avgCTR = ctrVids.length > 0 ? ctrVids.reduce((s: number, v: any) => s + v.ctr, 0) / ctrVids.length : null;
+      const avgRetention = retVids.length > 0 ? retVids.reduce((s: number, v: any) => s + v.avg_view_percentage, 0) / retVids.length : null;
 
       setData({
         channel: ch.data,
         videos,
-        stats: { totalViews, totalLikes, totalComments, avgEng, avgCTR, avgRetention, totalWatchTime, realCount, total: videos.length },
+        stats: { totalViews, totalLikes, totalComments, avgEng, avgCTR, avgRetention, totalWatchTime, realCount, total: videos.length, ctrVidsCount: ctrVids.length },
       });
       setLastSync(new Date().toLocaleTimeString());
     } catch (e) {
@@ -74,6 +84,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function onDateRangeChange(days: number) {
+    setDateRange(days);
+    fetchData(days);
   }
 
   async function analyzeVideo(id: string) {
@@ -134,17 +149,17 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    fetchData();
+    fetchData(dateRange);
     const params = new URLSearchParams(window.location.search);
     if (params.get("oauth_success")) {
-      setStatus("✅ YouTube connected! Refresh to see real CTR/retention.");
+      setStatus("✅ YouTube connected! Loading data...");
       window.history.replaceState({}, "", "/dashboard");
     }
     if (params.get("oauth_error")) {
       setStatus("❌ OAuth error: " + params.get("oauth_error"));
       window.history.replaceState({}, "", "/dashboard");
     }
-    const i = setInterval(fetchData, 5 * 60 * 1000);
+    const i = setInterval(() => fetchData(dateRange), 5 * 60 * 1000);
     return () => clearInterval(i);
   }, []);
 
@@ -181,6 +196,33 @@ export default function DashboardPage() {
 
           <OAuthBanner />
 
+          {/* Date Range Selector */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Calendar size={14} className="text-blue-400" />
+              <span className="text-xs sm:text-sm text-gray-400 font-medium">Date Range:</span>
+            </div>
+            <div className="flex gap-1.5 sm:gap-2 flex-wrap">
+              {DATE_RANGES.map(r => (
+                <button
+                  key={r.days}
+                  onClick={() => onDateRangeChange(r.days)}
+                  disabled={loading}
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-medium transition-all ${
+                    dateRange === r.days
+                      ? "bg-blue-600 text-white border border-blue-500"
+                      : "bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10"
+                  } disabled:opacity-50`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] sm:text-xs text-gray-500 mt-2">
+              {dateRange === 3650 ? "Showing all-time data" : `Showing data from last ${dateRange} days`}
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 lg:flex lg:flex-wrap gap-2">
             <button onClick={previewEvents} disabled={eventsLoading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs sm:text-sm disabled:opacity-50">
               <Activity size={14} className={eventsLoading ? "animate-pulse" : ""} />
@@ -192,7 +234,7 @@ export default function DashboardPage() {
             <button onClick={sendTelegramTest} disabled={syncing} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs sm:text-sm disabled:opacity-50">
               <Bell size={14} /> Test
             </button>
-            <button onClick={fetchData} disabled={loading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm disabled:opacity-50">
+            <button onClick={() => fetchData(dateRange)} disabled={loading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm disabled:opacity-50">
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Sync
             </button>
           </div>
@@ -238,7 +280,7 @@ export default function DashboardPage() {
           <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" />
           <StatCard title="Total Likes" value={data?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" format="number" />
           {data?.stats?.avgCTR !== null && data?.stats?.avgCTR !== undefined ? (
-            <StatCard title="Avg CTR" value={parseFloat(data.stats.avgCTR.toFixed(2))} icon={<TrendingUp size={16} />} color={data.stats.avgCTR >= 5 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
+            <StatCard title="Avg CTR" value={parseFloat(data.stats.avgCTR.toFixed(2))} icon={<TrendingUp size={16} />} color={data.stats.avgCTR >= 5 ? "green" : "yellow"} format="percent" subtitle={`✓ REAL (${data.stats.ctrVidsCount} vids)`} />
           ) : (
             <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="purple" format="percent" subtitle="real calc" />
           )}
@@ -341,7 +383,6 @@ function AnalysisPanel({ analysis }: { analysis: any }) {
         {analysis.ai.thumbnail_analysis && <B c="blue" l="THUMBNAIL" t={analysis.ai.thumbnail_analysis} />}
         {analysis.ai.title_analysis && <B c="cyan" l="TITLE" t={analysis.ai.title_analysis} />}
         {analysis.ai.engagement_analysis && <B c="yellow" l="ENGAGEMENT" t={analysis.ai.engagement_analysis} />}
-        {analysis.ai.retention_analysis && <B c="yellow" l="RETENTION" t={analysis.ai.retention_analysis} />}
         {analysis.ai.seo_analysis && <B c="orange" l="SEO" t={analysis.ai.seo_analysis} />}
         {analysis.ai.improved_title && <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2 sm:p-3"><p className="text-xs font-medium text-green-400 mb-1">BETTER TITLE</p><p className="text-xs sm:text-sm text-white font-medium">{analysis.ai.improved_title}</p></div>}
         {analysis.ai.next_video_advice && <B c="pink" l="NEXT VIDEO" t={analysis.ai.next_video_advice} />}
