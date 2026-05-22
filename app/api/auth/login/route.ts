@@ -1,9 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAuthUrl, hasOAuthConfig } from "@/lib/oauth";
 
-export async function GET() {
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
   if (!hasOAuthConfig()) {
-    return NextResponse.json({ error: "OAuth not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to env." }, { status: 500 });
+    return NextResponse.json({
+      error: "OAuth not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to environment."
+    }, { status: 500 });
   }
   return NextResponse.redirect(getAuthUrl());
 }

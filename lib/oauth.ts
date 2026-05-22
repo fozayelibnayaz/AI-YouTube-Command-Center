@@ -16,10 +16,14 @@ export function hasOAuthConfig(): boolean {
 }
 
 function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-  if (!url || !key) return null;
-  return createClient(url, key);
+  try {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (!url || !key) return null;
+    return createClient(url, key);
+  } catch {
+    return null;
+  }
 }
 
 export function getAuthUrl(): string {
@@ -40,11 +44,8 @@ export async function exchangeCodeForTokens(code: string): Promise<any> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      code,
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      redirect_uri: REDIRECT_URI,
-      grant_type: "authorization_code",
+      code, client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
+      redirect_uri: REDIRECT_URI, grant_type: "authorization_code",
     }),
   });
   return res.json();
@@ -55,20 +56,33 @@ export async function refreshAccessToken(refreshToken: string): Promise<any> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: "refresh_token",
+      refresh_token: refreshToken, client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET, grant_type: "refresh_token",
     }),
   });
   return res.json();
+}
+
+// Helper that gracefully handles missing channel_title column
+async function upsertSafe(sb: any, row: any): Promise<void> {
+  try {
+    await sb.from("oauth_tokens").upsert(row);
+  } catch (e: any) {
+    if (e?.message?.includes("channel_title")) {
+      // Column missing - retry without it
+      const { channel_title, ...rest } = row;
+      await sb.from("oauth_tokens").upsert(rest);
+    } else {
+      throw e;
+    }
+  }
 }
 
 export async function saveTokens(tokens: any, email: string, channelId: string, channelTitle?: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("Supabase not configured");
   const expiresAt = new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString();
-  await sb.from("oauth_tokens").upsert({
+  await upsertSafe(sb, {
     id: "primary",
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
@@ -81,24 +95,29 @@ export async function saveTokens(tokens: any, email: string, channelId: string, 
   });
 }
 
-// Updates ONLY channel info, doesn't fail if tokens missing
 export async function updateChannelSelection(channelId: string, channelTitle: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("Supabase not configured");
 
-  // First check if row exists
   const { data: existing } = await sb.from("oauth_tokens").select("id").eq("id", "primary").maybeSingle();
 
   if (existing) {
-    await sb.from("oauth_tokens").update({
+    const updateData: any = {
       channel_id: channelId,
-      channel_title: channelTitle,
       updated_at: new Date().toISOString(),
-    }).eq("id", "primary");
+    };
+    // Try with channel_title, fallback without
+    try {
+      await sb.from("oauth_tokens").update({ ...updateData, channel_title: channelTitle }).eq("id", "primary");
+    } catch (e: any) {
+      if (e?.message?.includes("channel_title")) {
+        await sb.from("oauth_tokens").update(updateData).eq("id", "primary");
+      } else {
+        throw e;
+      }
+    }
   } else {
-    // No OAuth row yet - create a placeholder one with just channel info
-    // This lets us track which channel to display even before OAuth
-    await sb.from("oauth_tokens").upsert({
+    await upsertSafe(sb, {
       id: "primary",
       access_token: "",
       refresh_token: "",
@@ -154,13 +173,21 @@ export async function getOAuthStatus(): Promise<{ connected: boolean; email?: st
   const sb = getSupabase();
   if (!sb) return { connected: false };
   try {
-    const { data } = await sb.from("oauth_tokens").select("email,channel_id,channel_title,expires_at,access_token").eq("id", "primary").maybeSingle();
+    // Try with channel_title, fallback without
+    let data: any = null;
+    try {
+      const r = await sb.from("oauth_tokens").select("email,channel_id,channel_title,expires_at,access_token").eq("id", "primary").maybeSingle();
+      data = r.data;
+    } catch {
+      const r = await sb.from("oauth_tokens").select("email,channel_id,expires_at,access_token").eq("id", "primary").maybeSingle();
+      data = r.data;
+    }
     if (!data) return { connected: false };
     return {
       connected: !!data.access_token,
       email: data.email,
       channelId: data.channel_id,
-      channelTitle: data.channel_title,
+      channelTitle: data.channel_title || "",
       expiresAt: data.expires_at,
     };
   } catch { return { connected: false }; }
@@ -194,7 +221,6 @@ export async function getMineChannels(accessToken: string): Promise<any[]> {
   } catch { return []; }
 }
 
-// Public API lookup (uses API key, not OAuth)
 export async function getChannelByIdPublic(channelId: string): Promise<any | null> {
   try {
     const apiKey = process.env.YOUTUBE_API_KEY || "";

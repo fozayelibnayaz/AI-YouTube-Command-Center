@@ -3,33 +3,39 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function safeJson(data: any, status: number = 200) {
+  return new NextResponse(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { channelId, channelTitle } = body;
+    let body: any = {};
+    try { body = await req.json(); } catch { return safeJson({ success: false, error: "Invalid JSON" }); }
 
-    if (!channelId) {
-      return NextResponse.json({ success: false, error: "channelId required" }, { status: 200 });
-    }
+    const channelId = (body.channelId || "").trim();
+    const channelTitle = (body.channelTitle || "").trim();
 
-    const { updateChannelSelection } = await import("@/lib/oauth");
+    if (!channelId) return safeJson({ success: false, error: "channelId required" });
+
+    let oauth;
+    try { oauth = await import("@/lib/oauth"); }
+    catch (e: any) { return safeJson({ success: false, error: "Module load: " + e.message }); }
 
     try {
-      await updateChannelSelection(channelId, channelTitle || "");
+      await oauth.updateChannelSelection(channelId, channelTitle);
     } catch (e: any) {
-      // If no OAuth token exists yet, store in a simpler way
-      return NextResponse.json({
+      return safeJson({
         success: false,
-        error: "Save failed: " + String(e?.message || e),
-        hint: "You may need to OAuth login first, or check Supabase oauth_tokens table",
-      }, { status: 200 });
+        error: "Save failed: " + (e?.message || String(e)),
+        hint: "Check Supabase oauth_tokens table has channel_title column. Run: ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS channel_title TEXT DEFAULT '';",
+      });
     }
 
-    return NextResponse.json({ success: true, channelId, channelTitle });
+    return safeJson({ success: true, channelId, channelTitle });
   } catch (e: any) {
-    return NextResponse.json({
-      success: false,
-      error: String(e?.message || e),
-    }, { status: 200 });
+    return safeJson({ success: false, error: String(e?.message || e) });
   }
 }
