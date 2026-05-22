@@ -7,6 +7,7 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    -webkit-tap-highlight-color: transparent;
   }
 
   html, body {
@@ -15,6 +16,26 @@
     min-height: 100vh;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    text-size-adjust: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Better touch targets on mobile */
+  button, a {
+    touch-action: manipulation;
+  }
+
+  /* Prevent zoom on input focus on iOS */
+  input, textarea, select {
+    font-size: 16px;
+  }
+
+  @media (min-width: 640px) {
+    input, textarea, select {
+      font-size: inherit;
+    }
   }
 }
 
@@ -25,7 +46,6 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  
   .line-clamp-3 {
     display: -webkit-box;
     -webkit-line-clamp: 3;
@@ -34,17 +54,17 @@
   }
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+/* Prevent horizontal scroll */
+.overflow-x-hidden-mobile {
+  overflow-x: hidden;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.15);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.25);
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
 }
