@@ -29,7 +29,8 @@ export function getAuthUrl(): string {
     response_type: "code",
     scope: SCOPES.join(" "),
     access_type: "offline",
-    prompt: "consent",
+    prompt: "consent select_account",  // Forces account picker every time
+    include_granted_scopes: "true",
   });
   return "https://accounts.google.com/o/oauth2/v2/auth?" + params.toString();
 }
@@ -63,7 +64,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<any> {
   return res.json();
 }
 
-export async function saveTokens(tokens: any, email: string, channelId: string): Promise<void> {
+export async function saveTokens(tokens: any, email: string, channelId: string, channelTitle?: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("Supabase not configured");
 
@@ -77,8 +78,19 @@ export async function saveTokens(tokens: any, email: string, channelId: string):
     scope: tokens.scope || "",
     email,
     channel_id: channelId,
+    channel_title: channelTitle || "",
     updated_at: new Date().toISOString(),
   });
+}
+
+export async function updateChannelSelection(channelId: string, channelTitle: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase not configured");
+  await sb.from("oauth_tokens").update({
+    channel_id: channelId,
+    channel_title: channelTitle,
+    updated_at: new Date().toISOString(),
+  }).eq("id", "primary");
 }
 
 export async function getValidAccessToken(): Promise<string | null> {
@@ -91,7 +103,6 @@ export async function getValidAccessToken(): Promise<string | null> {
   const expiresAt = new Date(data.expires_at).getTime();
   const now = Date.now();
 
-  // Refresh if expires in less than 5 minutes
   if (expiresAt - now < 5 * 60 * 1000) {
     const refreshed = await refreshAccessToken(data.refresh_token);
     if (refreshed.access_token) {
@@ -109,17 +120,25 @@ export async function getValidAccessToken(): Promise<string | null> {
   return data.access_token;
 }
 
-export async function getOAuthStatus(): Promise<{ connected: boolean; email?: string; channelId?: string; expiresAt?: string }> {
+export async function getStoredChannelId(): Promise<string | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data } = await sb.from("oauth_tokens").select("channel_id").eq("id", "primary").single();
+  return data?.channel_id || null;
+}
+
+export async function getOAuthStatus(): Promise<{ connected: boolean; email?: string; channelId?: string; channelTitle?: string; expiresAt?: string }> {
   const sb = getSupabase();
   if (!sb) return { connected: false };
 
-  const { data } = await sb.from("oauth_tokens").select("email,channel_id,expires_at").eq("id", "primary").single();
+  const { data } = await sb.from("oauth_tokens").select("email,channel_id,channel_title,expires_at").eq("id", "primary").single();
   if (!data) return { connected: false };
 
   return {
     connected: true,
     email: data.email,
     channelId: data.channel_id,
+    channelTitle: data.channel_title,
     expiresAt: data.expires_at,
   };
 }
@@ -137,11 +156,27 @@ export async function getUserInfo(accessToken: string): Promise<any> {
   return res.json();
 }
 
+// Gets ALL channels the user manages (personal + brand accounts)
+export async function getAllManagedChannels(accessToken: string): Promise<any[]> {
+  try {
+    const res = await fetch(
+      "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&mine=true&maxResults=50",
+      { headers: { Authorization: "Bearer " + accessToken } }
+    );
+    const data = await res.json();
+    if (data.error) {
+      console.error("getAllManagedChannels error:", data.error);
+      return [];
+    }
+    return data.items || [];
+  } catch (e) {
+    console.error("getAllManagedChannels exception:", e);
+    return [];
+  }
+}
+
+// Legacy
 export async function getOwnedChannel(accessToken: string): Promise<any> {
-  const res = await fetch(
-    "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&mine=true",
-    { headers: { Authorization: "Bearer " + accessToken } }
-  );
-  const data = await res.json();
-  return data.items?.[0];
+  const channels = await getAllManagedChannels(accessToken);
+  return channels[0];
 }

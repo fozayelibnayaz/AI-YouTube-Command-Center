@@ -1,12 +1,11 @@
 import { getBatchVideoAnalytics } from "./youtube-analytics";
-import { getValidAccessToken } from "./oauth";
+import { getValidAccessToken, getStoredChannelId } from "./oauth";
 
 const API_KEY = process.env.YOUTUBE_API_KEY!;
-const CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID!;
+const DEFAULT_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID!;
 
-function isConfigured(): boolean {
-  return !!API_KEY && !API_KEY.includes("your_")
-      && !!CHANNEL_ID && !CHANNEL_ID.includes("your_");
+function isApiConfigured(): boolean {
+  return !!API_KEY && !API_KEY.includes("your_") && API_KEY.length > 20;
 }
 
 function parseDuration(duration: string): number {
@@ -24,23 +23,36 @@ function calculateRealEngagement(views: number, likes: number, comments: number)
 }
 
 const DEMO_CHANNEL = {
-  title: "Demo Channel",
+  title: "Demo YouTube Channel",
   thumbnail: "",
   subscribers: 45200,
   totalViews: 1250000,
   videoCount: 87,
 };
 
+// Get the channel ID to use: OAuth-selected channel OR env default
+async function getActiveChannelId(): Promise<string> {
+  const stored = await getStoredChannelId();
+  if (stored && stored.length > 5) return stored;
+  return DEFAULT_CHANNEL_ID;
+}
+
 export async function getChannelInfo() {
-  if (!isConfigured()) return { ...DEMO_CHANNEL, demo: true };
+  if (!isApiConfigured()) return { ...DEMO_CHANNEL, demo: true };
+
+  const channelId = await getActiveChannelId();
+  if (!channelId || channelId.includes("your_")) return { ...DEMO_CHANNEL, demo: true };
 
   try {
     const res = await fetch(
-      "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=" + CHANNEL_ID + "&key=" + API_KEY,
-      { next: { revalidate: 3600 } }
+      "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=" + channelId + "&key=" + API_KEY,
+      { next: { revalidate: 600 } }
     );
     const data = await res.json();
-    if (data.error || !data.items?.length) throw new Error("Channel not found");
+    if (data.error || !data.items?.length) {
+      console.error("Channel fetch error:", data.error);
+      throw new Error("Channel not found: " + channelId);
+    }
     const ch = data.items[0];
     return {
       title: ch.snippet.title,
@@ -48,22 +60,28 @@ export async function getChannelInfo() {
       subscribers: parseInt(ch.statistics.subscriberCount || "0"),
       totalViews: parseInt(ch.statistics.viewCount || "0"),
       videoCount: parseInt(ch.statistics.videoCount || "0"),
+      channel_id: channelId,
       demo: false,
     };
-  } catch {
-    return { ...DEMO_CHANNEL, demo: true };
+  } catch (e) {
+    console.error("getChannelInfo error:", e);
+    return { ...DEMO_CHANNEL, demo: true, error: String(e) };
   }
 }
 
 export async function getChannelVideos(max = 500) {
-  if (!isConfigured()) return [];
+  if (!isApiConfigured()) return [];
+
+  const channelId = await getActiveChannelId();
+  if (!channelId || channelId.includes("your_")) return [];
 
   try {
     const channelRes = await fetch(
-      "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=" + CHANNEL_ID + "&key=" + API_KEY
+      "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=" + channelId + "&key=" + API_KEY
     );
     const channelData = await channelRes.json();
     if (channelData.error) throw new Error(channelData.error.message);
+    if (!channelData.items?.length) throw new Error("No channel data");
 
     const uploadsId = channelData.items[0].contentDetails.relatedPlaylists.uploads;
 
@@ -88,7 +106,6 @@ export async function getChannelVideos(max = 500) {
       if (safety > 50) break;
     } while (nextPageToken && allVideoIds.length < max);
 
-    // Fetch video details from YouTube Data API
     const allVideos: any[] = [];
     for (let i = 0; i < allVideoIds.length; i += 50) {
       const batch = allVideoIds.slice(i, i + 50).join(",");
@@ -122,19 +139,17 @@ export async function getChannelVideos(max = 500) {
       }
     }
 
-    // ─── ENRICH with REAL CTR/Retention if OAuth connected ───
+    // Enrich with REAL CTR/Retention if OAuth connected
     const token = await getValidAccessToken();
     if (token) {
       try {
         const realAnalytics = await getBatchVideoAnalytics(allVideoIds, 90);
-
         for (const v of allVideos) {
           const real = realAnalytics[v.youtube_id];
           if (real) {
             v.analytics = {
               ...v.analytics,
-              // REAL data from YouTube Analytics API
-              ctr: real.ctr,  // REAL impression CTR
+              ctr: real.ctr,
               impressions: real.impressions,
               avg_view_percentage: real.averageViewPercentage
                 ? parseFloat(real.averageViewPercentage.toFixed(2))
