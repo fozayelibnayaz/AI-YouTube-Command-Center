@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard, Brain, Tv } from "lucide-react";
+import { LayoutDashboard, Brain, Tv, MessageCircle } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -22,6 +22,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <LayoutDashboard size={18} />
             Dashboard
           </Link>
+          <Link href="/ask" className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+            <MessageCircle size={18} />
+            Ask AI
+          </Link>
           <Link href="/insights" className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-all">
             <Brain size={18} />
             AI Tools
@@ -30,7 +34,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         <div className="p-3 border-t border-white/5">
           <Link href="/" className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-500 hover:text-white hover:bg-white/5 transition-all">
-            <span>Home</span>
+            Home
           </Link>
         </div>
       </aside>

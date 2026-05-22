@@ -1,21 +1,4 @@
-// Smart Notification Engine - works on Vercel (no filesystem)
-// Uses Supabase if available, falls back to in-memory cache
-
-import { createClient } from "@supabase/supabase-js";
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-function hasSupabase(): boolean {
-  return !!SUPABASE_URL && !!SUPABASE_KEY && !SUPABASE_URL.includes("your_");
-}
-
-function sb() {
-  if (!hasSupabase()) return null;
-  return createClient(SUPABASE_URL!, SUPABASE_KEY!);
-}
-
-// In-memory fallback (lost on cold start, but works for testing)
+// In-memory snapshot - persists within same function instance
 let memorySnapshot: Record<string, VideoSnapshot> = {};
 
 export interface VideoSnapshot {
@@ -40,17 +23,29 @@ export interface NotificationEvent {
   emoji: string;
 }
 
+function getSupabase(): any {
+  try {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    if (!url || !key || url.includes("your_") || key.length < 20) return null;
+    const { createClient } = require("@supabase/supabase-js");
+    return createClient(url, key);
+  } catch {
+    return null;
+  }
+}
+
 export async function loadSnapshot(): Promise<Record<string, VideoSnapshot>> {
-  const client = sb();
-  if (client) {
+  const sb = getSupabase();
+  if (sb) {
     try {
-      const { data, error } = await client.from("snapshots").select("*").eq("id", "latest").single();
-      if (!error && data?.snapshot) return data.snapshot;
+      const { data } = await sb.from("snapshots").select("snapshot").eq("id", "latest").single();
+      if (data?.snapshot && typeof data.snapshot === "object") return data.snapshot;
     } catch (e) {
-      console.error("loadSnapshot supabase error:", e);
+      console.log("Supabase load failed:", String(e));
     }
   }
-  return memorySnapshot;
+  return { ...memorySnapshot };
 }
 
 export async function saveSnapshot(videos: any[]): Promise<void> {
@@ -58,144 +53,232 @@ export async function saveSnapshot(videos: any[]): Promise<void> {
   const now = new Date().toISOString();
   for (const v of videos) {
     snapshot[v.youtube_id] = {
-      youtube_id: v.youtube_id,
-      title: v.title,
-      views: v.views || 0,
-      likes: v.likes || 0,
-      comments: v.comments || 0,
-      ctr: v.ctr || 0,
-      avg_view_percentage: v.avg_view_percentage || 0,
-      published_at: v.published_at,
-      captured_at: now,
+      youtube_id: v.youtube_id, title: v.title || "",
+      views: v.views || 0, likes: v.likes || 0, comments: v.comments || 0,
+      ctr: v.ctr || 0, avg_view_percentage: v.avg_view_percentage || 0,
+      published_at: v.published_at || "", captured_at: now,
     };
   }
   memorySnapshot = snapshot;
 
-  const client = sb();
-  if (client) {
+  const sb = getSupabase();
+  if (sb) {
     try {
-      await client.from("snapshots").upsert({ id: "latest", snapshot, updated_at: now });
+      await sb.from("snapshots").upsert({ id: "latest", snapshot, updated_at: now });
     } catch (e) {
-      console.error("saveSnapshot supabase error:", e);
+      console.log("Supabase save failed:", String(e));
     }
   }
 }
 
-function pctChange(now: number, prev: number): number {
+function pct(now: number, prev: number): number {
   if (prev === 0) return now > 0 ? 100 : 0;
   return ((now - prev) / prev) * 100;
 }
 
-function isNewVideo(publishedAt: string): boolean {
-  const hours = (Date.now() - new Date(publishedAt).getTime()) / (1000 * 60 * 60);
-  return hours <= 48;
+function isNew(publishedAt: string): boolean {
+  return (Date.now() - new Date(publishedAt).getTime()) / 3600000 <= 48;
 }
 
-function hitMilestone(value: number): number | null {
-  const milestones = [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000];
-  for (const m of milestones) {
-    if (value >= m && value < m * 1.05) return m;
-  }
+function milestoneHit(value: number, prev: number): number | null {
+  const ms = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000];
+  for (const m of ms) { if (value >= m && prev < m) return m; }
   return null;
 }
 
 export function detectEvents(
-  currentVideos: any[],
-  previousSnapshot: Record<string, VideoSnapshot>,
-  channel?: { subscribers: number; totalViews: number }
+  videos: any[], prev: Record<string, VideoSnapshot>, channel?: any
 ): NotificationEvent[] {
   const events: NotificationEvent[] = [];
+  const hasPrev = Object.keys(prev).length > 0;
 
-  for (const v of currentVideos) {
-    const prev = previousSnapshot[v.youtube_id];
-    const title = v.title || "Untitled";
-    const videoId = v.youtube_id;
-
-    if (!prev && isNewVideo(v.published_at)) {
-      events.push({
-        type: "new_video", videoId, title,
-        message: "New video just uploaded! Time to promote.",
-        severity: "info", emoji: "🆕",
-        data: { Title: title.substring(0, 45), "Initial Views": v.views || 0, "Posted At": new Date(v.published_at).toLocaleString() },
-      });
-      continue;
-    }
-    if (!prev) continue;
-
-    const viewsChange = pctChange(v.views || 0, prev.views);
-    const likesChange = pctChange(v.likes || 0, prev.likes);
-    const commentsChange = pctChange(v.comments || 0, prev.comments);
-    const viewsDelta = (v.views || 0) - prev.views;
-
-    if (viewsChange > 50 && viewsDelta > 100) {
-      events.push({ type: "viral", videoId, title, message: "🔥 VIRAL! This video is exploding right now!", severity: "success", emoji: "🔥", data: { Video: title.substring(0, 45), "Views Now": (v.views || 0).toLocaleString(), "Views Added": "+" + viewsDelta.toLocaleString(), Growth: "+" + viewsChange.toFixed(1) + "%", Action: "Boost everywhere NOW" } });
-    } else if (viewsChange >= 10 && viewsDelta > 20) {
-      events.push({ type: "rising", videoId, title, message: "📈 Video is gaining momentum - keep promoting!", severity: "success", emoji: "📈", data: { Video: title.substring(0, 45), "Views Added": "+" + viewsDelta.toLocaleString(), Growth: "+" + viewsChange.toFixed(1) + "%" } });
-    } else if (viewsChange > 0 && viewsChange < 2 && prev.views > 100) {
-      events.push({ type: "slowing", videoId, title, message: "📉 Growth is slowing down - needs a push.", severity: "warning", emoji: "📉", data: { Video: title.substring(0, 45), Growth: "+" + viewsChange.toFixed(2) + "%", Suggestion: "Share on socials / make a Short" } });
-    } else if (viewsDelta === 0 && prev.views > 50) {
-      events.push({ type: "stagnant", videoId, title, message: "⏸️ Zero new views - algorithm killed it.", severity: "warning", emoji: "⏸️", data: { Video: title.substring(0, 45), "Current Views": (v.views || 0).toLocaleString(), Suggestion: "Update thumbnail or title to revive" } });
-    } else if (viewsDelta < 0) {
-      events.push({ type: "declining", videoId, title, message: "⚠️ Views dropped (possibly removed views).", severity: "critical", emoji: "⚠️", data: { Video: title.substring(0, 45), "Views Lost": viewsDelta.toLocaleString(), "Now At": (v.views || 0).toLocaleString() } });
-    }
-
-    if (commentsChange > 100 && (v.comments || 0) - prev.comments >= 5) {
-      events.push({ type: "comments_spike", videoId, title, message: "💬 Comment activity exploded - join the conversation!", severity: "info", emoji: "💬", data: { Video: title.substring(0, 45), "New Comments": "+" + ((v.comments || 0) - prev.comments), Growth: "+" + commentsChange.toFixed(0) + "%" } });
-    }
-    if (likesChange > 50 && (v.likes || 0) - prev.likes >= 10) {
-      events.push({ type: "likes_spike", videoId, title, message: "👍 Likes are pouring in - audience loves this!", severity: "success", emoji: "👍", data: { Video: title.substring(0, 45), "New Likes": "+" + ((v.likes || 0) - prev.likes), Growth: "+" + likesChange.toFixed(0) + "%" } });
-    }
-
-    const milestone = hitMilestone(v.views || 0);
-    if (milestone && prev.views < milestone) {
-      events.push({ type: "milestone_views", videoId, title, message: "🏆 MILESTONE! Video crossed " + milestone.toLocaleString() + " views!", severity: "success", emoji: "🏆", data: { Video: title.substring(0, 45), Milestone: milestone.toLocaleString() + " views" } });
-    }
-  }
-
-  for (const v of currentVideos) {
-    if ((v.views || 0) < 50) continue;
+  for (const v of videos) {
+    const id = v.youtube_id;
+    const t = (v.title || "Untitled").substring(0, 50);
+    const p = prev[id];
+    const views = v.views || 0;
+    const likes = v.likes || 0;
+    const comments = v.comments || 0;
     const ctr = v.ctr || 0;
-    const retention = v.avg_view_percentage || 0;
-    const likeRate = ((v.likes || 0) / Math.max(v.views || 1, 1)) * 100;
+    const ret = v.avg_view_percentage || 0;
+    const engRate = ((likes + comments) / Math.max(views, 1)) * 100;
+
+    // ── New video ──
+    if (!p && isNew(v.published_at)) {
+      events.push({ type: "new_video", videoId: id, title: t, emoji: "🆕",
+        message: "New video uploaded! Promote immediately.", severity: "info",
+        data: { Video: t, Views: views, Posted: new Date(v.published_at).toLocaleDateString() } });
+    }
+
+    // ── Growth detection (only if we have prior snapshot) ──
+    if (p && hasPrev) {
+      const vd = views - p.views;
+      const vc = pct(views, p.views);
+      const ld = likes - p.likes;
+      const cd = comments - p.comments;
+
+      if (vc > 100 && vd > 500) {
+        events.push({ type: "viral_explosion", videoId: id, title: t, emoji: "🔥",
+          message: "VIRAL! Views exploding - boost everywhere NOW!", severity: "critical",
+          data: { Video: t, "Views Added": "+" + vd.toLocaleString(), Growth: "+" + vc.toFixed(0) + "%" } });
+      } else if (vc > 50 && vd > 100) {
+        events.push({ type: "viral", videoId: id, title: t, emoji: "🚀",
+          message: "Going viral! Capitalize immediately.", severity: "success",
+          data: { Video: t, "Views Added": "+" + vd.toLocaleString(), Growth: "+" + vc.toFixed(0) + "%" } });
+      } else if (vc >= 10 && vd > 20) {
+        events.push({ type: "rising", videoId: id, title: t, emoji: "📈",
+          message: "Gaining momentum - keep promoting!", severity: "success",
+          data: { Video: t, "Views Added": "+" + vd, Growth: "+" + vc.toFixed(1) + "%" } });
+      } else if (vc > 0 && vc < 1 && p.views > 200) {
+        events.push({ type: "slowing", videoId: id, title: t, emoji: "📉",
+          message: "Growth stalling - needs a push.", severity: "warning",
+          data: { Video: t, Growth: "+" + vc.toFixed(2) + "%", Tip: "Share on socials or make a Short" } });
+      } else if (vd === 0 && p.views > 100) {
+        events.push({ type: "stagnant", videoId: id, title: t, emoji: "⏸️",
+          message: "Zero new views - algorithm stopped pushing.", severity: "warning",
+          data: { Video: t, Views: views.toLocaleString(), Tip: "Change thumbnail or title" } });
+      } else if (vd < 0) {
+        events.push({ type: "views_dropped", videoId: id, title: t, emoji: "��",
+          message: "Views decreased (removed views or error).", severity: "critical",
+          data: { Video: t, "Views Lost": vd.toLocaleString() } });
+      }
+
+      if (cd >= 5 && pct(comments, p.comments) > 50) {
+        events.push({ type: "comments_spike", videoId: id, title: t, emoji: "��",
+          message: "Comments exploded - join the conversation!", severity: "info",
+          data: { Video: t, "New Comments": "+" + cd } });
+      }
+      if (ld >= 10 && pct(likes, p.likes) > 30) {
+        events.push({ type: "likes_spike", videoId: id, title: t, emoji: "👍",
+          message: "Likes pouring in - audience loves this!", severity: "success",
+          data: { Video: t, "New Likes": "+" + ld } });
+      }
+
+      const m = milestoneHit(views, p.views);
+      if (m) {
+        events.push({ type: "milestone", videoId: id, title: t, emoji: "🏆",
+          message: "MILESTONE! Crossed " + m.toLocaleString() + " views!", severity: "success",
+          data: { Video: t, Milestone: m.toLocaleString() + " views" } });
+      }
+    }
+
+    // ── Performance health checks (always run) ──
+    if (views < 30) continue;
 
     if (ctr < 2) {
-      events.push({ type: "low_ctr", videoId: v.youtube_id, title: v.title, message: "Thumbnail is failing - viewers are not clicking.", severity: "critical", emoji: "❌", data: { Video: v.title.substring(0, 45), "Current CTR": ctr.toFixed(2) + "%", Target: "above 4%", Action: "Redesign thumbnail urgently" } });
+      events.push({ type: "critical_ctr", videoId: id, title: t, emoji: "❌",
+        message: "Thumbnail failing badly - redesign URGENTLY.", severity: "critical",
+        data: { Video: t, CTR: ctr.toFixed(2) + "%", Target: ">4%", "Skip Rate": (100 - ctr).toFixed(1) + "% saw but didn't click" } });
+    } else if (ctr < 4) {
+      events.push({ type: "low_ctr", videoId: id, title: t, emoji: "⚠️",
+        message: "Below average CTR - thumbnail needs improvement.", severity: "warning",
+        data: { Video: t, CTR: ctr.toFixed(2) + "%", "Skipped By": (100 - ctr).toFixed(1) + "%" } });
     } else if (ctr >= 8) {
-      events.push({ type: "high_ctr", videoId: v.youtube_id, title: v.title, message: "�� Thumbnail is crushing it - replicate this style!", severity: "success", emoji: "🎯", data: { Video: v.title.substring(0, 45), CTR: ctr.toFixed(2) + "%", Action: "Use this thumbnail style on future videos" } });
+      events.push({ type: "excellent_ctr", videoId: id, title: t, emoji: "🎯",
+        message: "Thumbnail crushing it! Replicate this style.", severity: "success",
+        data: { Video: t, CTR: ctr.toFixed(2) + "%", "Click Rate": "Top 5% performance" } });
     }
-    if (retention < 25 && (v.views || 0) >= 100) {
-      events.push({ type: "low_retention", videoId: v.youtube_id, title: v.title, message: "Viewers leaving early - hook is broken.", severity: "critical", emoji: "⏱️", data: { Video: v.title.substring(0, 45), Retention: retention.toFixed(1) + "%", "Skipped Away": (100 - retention).toFixed(1) + "%", Action: "Re-edit first 30 seconds" } });
-    } else if (retention >= 50) {
-      events.push({ type: "high_retention", videoId: v.youtube_id, title: v.title, message: "🎬 People are watching to the end - amazing content!", severity: "success", emoji: "🎬", data: { Video: v.title.substring(0, 45), Retention: retention.toFixed(1) + "%", Action: "Make a Part 2 in same style" } });
+
+    if (ret < 20) {
+      events.push({ type: "critical_retention", videoId: id, title: t, emoji: "⏱️",
+        message: "Viewers leave almost immediately. Hook is broken.", severity: "critical",
+        data: { Video: t, Watched: ret.toFixed(1) + "%", "Skipped Away": (100 - ret).toFixed(1) + "%", Fix: "Re-edit first 30 seconds" } });
+    } else if (ret < 30) {
+      events.push({ type: "low_retention", videoId: id, title: t, emoji: "⏳",
+        message: "Below average retention - pacing needs work.", severity: "warning",
+        data: { Video: t, Watched: ret.toFixed(1) + "%", "Left Early": (100 - ret).toFixed(1) + "%" } });
+    } else if (ret >= 50) {
+      events.push({ type: "excellent_retention", videoId: id, title: t, emoji: "🎬",
+        message: "Amazing retention! Audience watches to the end.", severity: "success",
+        data: { Video: t, Watched: ret.toFixed(1) + "%", Action: "Make Part 2 same style" } });
     }
-    if (likeRate < 1 && (v.views || 0) >= 500) {
-      events.push({ type: "low_engagement", videoId: v.youtube_id, title: v.title, message: "Low like ratio - content not resonating.", severity: "warning", emoji: "👎", data: { Video: v.title.substring(0, 45), "Like Rate": likeRate.toFixed(2) + "%", Action: "Ask for likes in next intro" } });
-    } else if (likeRate >= 5) {
-      events.push({ type: "high_engagement", videoId: v.youtube_id, title: v.title, message: "❤️ Audience is in love - very high engagement!", severity: "success", emoji: "❤️", data: { Video: v.title.substring(0, 45), "Like Rate": likeRate.toFixed(2) + "%" } });
+
+    if (engRate < 1 && views >= 500) {
+      events.push({ type: "low_engagement", videoId: id, title: t, emoji: "👎",
+        message: "Low engagement - content not resonating.", severity: "warning",
+        data: { Video: t, "Engagement Rate": engRate.toFixed(2) + "%", "Likes/Views": ((likes / Math.max(views, 1)) * 100).toFixed(2) + "%" } });
+    } else if (engRate >= 8) {
+      events.push({ type: "high_engagement", videoId: id, title: t, emoji: "❤️",
+        message: "Incredible engagement! Audience loves this.", severity: "success",
+        data: { Video: t, "Engagement Rate": engRate.toFixed(2) + "%" } });
+    }
+
+    if (ctr < 3 && ret < 25 && views >= 100) {
+      events.push({ type: "needs_rescue", videoId: id, title: t, emoji: "🆘",
+        message: "Both CTR AND retention critical. Full rework needed.", severity: "critical",
+        data: { Video: t, CTR: ctr.toFixed(2) + "%", Retention: ret.toFixed(1) + "%", Action: "New thumbnail + re-edit hook" } });
+    }
+
+    if (ctr >= 6 && ret >= 40 && engRate >= 3) {
+      events.push({ type: "star_performer", videoId: id, title: t, emoji: "⭐",
+        message: "Star video! Everything working perfectly.", severity: "success",
+        data: { Video: t, CTR: ctr.toFixed(2) + "%", Retention: ret.toFixed(1) + "%", Engagement: engRate.toFixed(2) + "%" } });
+    }
+
+    // Upload age analysis
+    const daysSince = (Date.now() - new Date(v.published_at).getTime()) / 86400000;
+    const viewsPerDay = views / Math.max(daysSince, 1);
+    if (daysSince > 30 && viewsPerDay < 1 && views < 200) {
+      events.push({ type: "dead_video", videoId: id, title: t, emoji: "🪦",
+        message: "Video is dead - less than 1 view/day. Consider deleting or re-uploading.", severity: "warning",
+        data: { Video: t, "Views/Day": viewsPerDay.toFixed(2), Age: Math.floor(daysSince) + " days", Total: views } });
+    }
+    if (daysSince <= 7 && viewsPerDay >= 50) {
+      events.push({ type: "strong_launch", videoId: id, title: t, emoji: "🎉",
+        message: "Strong launch! New video performing well.", severity: "success",
+        data: { Video: t, "Views/Day": Math.round(viewsPerDay).toLocaleString(), Age: Math.floor(daysSince) + " days" } });
     }
   }
 
-  if (currentVideos.length > 1) {
-    const sorted = [...currentVideos].sort((a, b) => (b.views || 0) - (a.views || 0));
-    const top = sorted[0];
-    const worst = sorted[sorted.length - 1];
-    if (top && top.views >= 100) {
-      events.push({ type: "top_performer", videoId: top.youtube_id, title: top.title, message: "🥇 Top performing video right now.", severity: "success", emoji: "🥇", data: { Video: top.title.substring(0, 45), Views: (top.views || 0).toLocaleString(), CTR: (top.ctr || 0).toFixed(2) + "%" } });
-    }
-    if (worst && worst.views < 50 && currentVideos.length > 5) {
-      events.push({ type: "underperformer", videoId: worst.youtube_id, title: worst.title, message: "🪦 Lowest performer - consider removing.", severity: "warning", emoji: "🪦", data: { Video: worst.title.substring(0, 45), Views: (worst.views || 0).toLocaleString() } });
+  // ── Channel-level events ──
+  if (videos.length > 2) {
+    const sorted = [...videos].sort((a, b) => (b.score || 0) - (a.score || 0));
+    events.push({ type: "top_performer", videoId: sorted[0].youtube_id, title: sorted[0].title?.substring(0, 50),
+      message: "Best video overall by AI score.", severity: "success", emoji: "🥇",
+      data: { Video: sorted[0].title?.substring(0, 45), Score: (sorted[0].score || 0) + "/100", Views: (sorted[0].views || 0).toLocaleString() } });
+    events.push({ type: "worst_performer", videoId: sorted[sorted.length - 1].youtube_id, title: sorted[sorted.length - 1].title?.substring(0, 50),
+      message: "Lowest scoring video - needs attention.", severity: "warning", emoji: "🔴",
+      data: { Video: sorted[sorted.length - 1].title?.substring(0, 45), Score: (sorted[sorted.length - 1].score || 0) + "/100" } });
+
+    const avgScore = sorted.reduce((s, v) => s + (v.score || 0), 0) / sorted.length;
+    const avgCTR = videos.reduce((s, v) => s + (v.ctr || 0), 0) / videos.length;
+    const avgRet = videos.reduce((s, v) => s + (v.avg_view_percentage || 0), 0) / videos.length;
+    const totalViews = videos.reduce((s, v) => s + (v.views || 0), 0);
+    const totalEng = videos.reduce((s, v) => s + (v.likes || 0) + (v.comments || 0), 0);
+
+    events.push({ type: "daily_summary", videoId: "channel", title: "Channel Daily Summary",
+      message: "End-of-day channel performance report.", severity: "info", emoji: "📊",
+      data: {
+        "Total Videos": videos.length, "Total Views": totalViews.toLocaleString(),
+        "Total Engagement": totalEng.toLocaleString(),
+        "Avg CTR": avgCTR.toFixed(2) + "%", "Avg Retention": avgRet.toFixed(1) + "%",
+        "Avg AI Score": avgScore.toFixed(0) + "/100",
+        "Channel Health": avgScore >= 60 ? "Excellent" : avgScore >= 40 ? "Good" : avgScore >= 25 ? "Needs Work" : "Critical",
+      } });
+
+    // Upload gap check
+    const newest = videos.reduce((a, v) => new Date(v.published_at) > new Date(a.published_at) ? v : a);
+    const daysSinceLast = (Date.now() - new Date(newest.published_at).getTime()) / 86400000;
+    if (daysSinceLast > 14) {
+      events.push({ type: "upload_gap", videoId: "channel", title: "Upload Gap Warning", emoji: "📅",
+        message: "No upload in " + Math.floor(daysSinceLast) + " days! Consistency is key.", severity: "warning",
+        data: { "Days Since Upload": Math.floor(daysSinceLast), "Last Video": newest.title?.substring(0, 40), Action: "Upload this week" } });
     }
   }
 
-  if (channel) {
-    const subMilestone = hitMilestone(channel.subscribers);
-    if (subMilestone) {
-      events.push({ type: "milestone_subs", videoId: "channel", title: "Channel Milestone", message: "🎉 Channel reached " + subMilestone.toLocaleString() + " subscribers!", severity: "success", emoji: "🎉", data: { Milestone: subMilestone.toLocaleString() + " subscribers", "Current Total": channel.subscribers.toLocaleString() } });
+  if (channel?.subscribers) {
+    const m = milestoneHit(channel.subscribers, (channel.subscribers || 0) - 1);
+    if (m) {
+      events.push({ type: "sub_milestone", videoId: "channel", title: "Subscriber Milestone", emoji: "🎉",
+        message: "Channel reached " + m.toLocaleString() + " subscribers!", severity: "success",
+        data: { Milestone: m.toLocaleString() + " subs", Current: channel.subscribers.toLocaleString() } });
     }
   }
 
-  if (events.length === 0 && Object.keys(previousSnapshot).length > 0) {
-    events.push({ type: "no_change", videoId: "system", title: "Daily Status", message: "📊 No significant changes since last check. Channel is stable.", severity: "info", emoji: "📊", data: { "Videos Tracked": currentVideos.length, Status: "Stable - no major events" } });
+  if (events.length === 0) {
+    events.push({ type: "all_stable", videoId: "system", title: "All Stable", emoji: "✅",
+      message: "No significant changes. Channel is stable.", severity: "info",
+      data: { Status: "Stable", "Videos Checked": videos.length } });
   }
 
   return events;
