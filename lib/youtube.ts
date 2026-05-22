@@ -1,3 +1,6 @@
+import { getBatchVideoAnalytics } from "./youtube-analytics";
+import { getValidAccessToken } from "./oauth";
+
 const API_KEY = process.env.YOUTUBE_API_KEY!;
 const CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID!;
 
@@ -9,35 +12,19 @@ function isConfigured(): boolean {
 function parseDuration(duration: string): number {
   const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return 0;
-  const h = parseInt(match[1] || "0");
-  const m = parseInt(match[2] || "0");
-  const s = parseInt(match[3] || "0");
-  return h * 3600 + m * 60 + s;
+  return (parseInt(match[1] || "0") * 3600) + (parseInt(match[2] || "0") * 60) + parseInt(match[3] || "0");
 }
 
-// Engagement-based metrics derived from REAL data
-// These are calculations, NOT estimates - 100% real
-function calculateRealMetrics(views: number, likes: number, comments: number, duration: number) {
-  const engagementRate = views > 0 ? ((likes + comments) / views) * 100 : 0;
-  const likeRate = views > 0 ? (likes / views) * 100 : 0;
-  const commentRate = views > 0 ? (comments / views) * 100 : 0;
-
+function calculateRealEngagement(views: number, likes: number, comments: number) {
   return {
-    engagement_rate: parseFloat(engagementRate.toFixed(3)),
-    like_rate: parseFloat(likeRate.toFixed(3)),
-    comment_rate: parseFloat(commentRate.toFixed(3)),
-    // These are NULL because YouTube Data API doesn't provide them
-    ctr: null,
-    avg_view_percentage: null,
-    avg_view_duration_seconds: null,
-    impressions: null,
-    watch_time_minutes: null,
-    revenue_usd: null,
+    engagement_rate: views > 0 ? parseFloat((((likes + comments) / views) * 100).toFixed(3)) : 0,
+    like_rate: views > 0 ? parseFloat(((likes / views) * 100).toFixed(3)) : 0,
+    comment_rate: views > 0 ? parseFloat(((comments / views) * 100).toFixed(3)) : 0,
   };
 }
 
 const DEMO_CHANNEL = {
-  title: "Demo YouTube Channel",
+  title: "Demo Channel",
   thumbnail: "",
   subscribers: 45200,
   totalViews: 1250000,
@@ -69,9 +56,7 @@ export async function getChannelInfo() {
 }
 
 export async function getChannelVideos(max = 500) {
-  if (!isConfigured()) {
-    return [];
-  }
+  if (!isConfigured()) return [];
 
   try {
     const channelRes = await fetch(
@@ -103,12 +88,12 @@ export async function getChannelVideos(max = 500) {
       if (safety > 50) break;
     } while (nextPageToken && allVideoIds.length < max);
 
+    // Fetch video details from YouTube Data API
     const allVideos: any[] = [];
     for (let i = 0; i < allVideoIds.length; i += 50) {
       const batch = allVideoIds.slice(i, i + 50).join(",");
       const videoRes = await fetch(
-        "https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=" +
-          batch + "&key=" + API_KEY
+        "https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=" + batch + "&key=" + API_KEY
       );
       const videoData = await videoRes.json();
       if (videoData.error) throw new Error(videoData.error.message);
@@ -119,7 +104,7 @@ export async function getChannelVideos(max = 500) {
         const likes = parseInt(v.statistics?.likeCount || "0");
         const comments = parseInt(v.statistics?.commentCount || "0");
 
-        const video = {
+        allVideos.push({
           youtube_id: v.id,
           title: v.snippet.title,
           description: v.snippet.description || "",
@@ -130,15 +115,41 @@ export async function getChannelVideos(max = 500) {
           views,
           likes,
           comments,
-        };
-
-        allVideos.push({
-          ...video,
-          analytics: calculateRealMetrics(views, likes, comments, duration),
+          analytics: calculateRealEngagement(views, likes, comments),
           demo: false,
-          data_source: "youtube_data_api_v3",
-          metrics_note: "Views/Likes/Comments are 100% real. CTR/Retention require YouTube Analytics API (OAuth).",
+          has_real_analytics: false,
         });
+      }
+    }
+
+    // ─── ENRICH with REAL CTR/Retention if OAuth connected ───
+    const token = await getValidAccessToken();
+    if (token) {
+      try {
+        const realAnalytics = await getBatchVideoAnalytics(allVideoIds, 90);
+
+        for (const v of allVideos) {
+          const real = realAnalytics[v.youtube_id];
+          if (real) {
+            v.analytics = {
+              ...v.analytics,
+              // REAL data from YouTube Analytics API
+              ctr: real.ctr,  // REAL impression CTR
+              impressions: real.impressions,
+              avg_view_percentage: real.averageViewPercentage
+                ? parseFloat(real.averageViewPercentage.toFixed(2))
+                : null,
+              avg_view_duration_seconds: real.averageViewDuration || null,
+              watch_time_minutes: real.estimatedMinutesWatched || null,
+              shares: real.shares || 0,
+              subscribers_gained: real.subscribersGained || 0,
+              analytics_period: "Last 90 days",
+            };
+            v.has_real_analytics = true;
+          }
+        }
+      } catch (e) {
+        console.error("Failed to enrich with Analytics API:", e);
       }
     }
 

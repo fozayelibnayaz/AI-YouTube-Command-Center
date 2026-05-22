@@ -2,11 +2,12 @@
 import { useState, useEffect } from "react";
 import { StatCard } from "@/components/ui/stat-card";
 import { VideoCard } from "@/components/dashboard/video-card";
+import { OAuthBanner } from "@/components/oauth-banner";
 import { calculatePerformanceScore, formatNumber } from "@/lib/utils";
 import {
-  Eye, Users, Heart, MessageSquare, TrendingUp,
+  Eye, Users, Heart, MessageSquare, TrendingUp, Clock,
   Bell, RefreshCw, Trophy, AlertTriangle, Brain, BarChart3, Zap,
-  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send, Info
+  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -22,7 +23,7 @@ export default function DashboardPage() {
   const [events, setEvents] = useState<any[]>([]);
   const [showEvents, setShowEvents] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(false);
-  const [showDataInfo, setShowDataInfo] = useState(false);
+  const [hasRealData, setHasRealData] = useState(false);
 
   async function fetchData() {
     setLoading(true);
@@ -43,23 +44,31 @@ export default function DashboardPage() {
         }),
       })).sort((a: any, b: any) => b.score - a.score);
 
+      const realCount = videos.filter((v: any) => v.has_real_analytics).length;
+      setHasRealData(realCount > 0);
+
       const totalViews = videos.reduce((s: number, v: any) => s + (v.views || 0), 0);
       const totalLikes = videos.reduce((s: number, v: any) => s + (v.likes || 0), 0);
       const totalComments = videos.reduce((s: number, v: any) => s + (v.comments || 0), 0);
+      const totalWatchTime = videos.reduce((s: number, v: any) => s + (v.watch_time_minutes || 0), 0);
       const avgEng = totalViews > 0 ? ((totalLikes + totalComments) / totalViews) * 100 : 0;
 
-      const stats = {
-        totalViews,
-        totalLikes,
-        totalComments,
-        avgEngagement: avgEng,
-        totalEngagement: totalLikes + totalComments,
-      };
-      setData({ channel: ch.data, videos, stats });
+      // Average CTR and retention from videos that have REAL data
+      const realVids = videos.filter((v: any) => v.ctr !== null && v.ctr !== undefined);
+      const avgCTR = realVids.length > 0 ? realVids.reduce((s: number, v: any) => s + (v.ctr || 0), 0) / realVids.length : null;
+      const avgRetention = realVids.length > 0
+        ? realVids.filter((v: any) => v.avg_view_percentage !== null).reduce((s: number, v: any) => s + (v.avg_view_percentage || 0), 0) / realVids.length
+        : null;
+
+      setData({
+        channel: ch.data,
+        videos,
+        stats: { totalViews, totalLikes, totalComments, avgEng, avgCTR, avgRetention, totalWatchTime, realCount, total: videos.length },
+      });
       setLastSync(new Date().toLocaleTimeString());
     } catch (e) {
       console.error(e);
-      setStatus("❌ Failed to load data");
+      setStatus("❌ Failed to load");
     } finally {
       setLoading(false);
     }
@@ -71,8 +80,7 @@ export default function DashboardPage() {
     setAnalyzing(prev => ({ ...prev, [id]: true }));
     try {
       const res = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "analyze_video", payload: { video, channelSubscribers: data?.channel?.subscribers } }),
       });
       const json = await res.json();
@@ -89,71 +97,62 @@ export default function DashboardPage() {
   }
 
   async function previewEvents() {
-    setEventsLoading(true);
-    setStatus("🔍 Detecting events...");
+    setEventsLoading(true); setStatus("🔍 Detecting...");
     try {
       const res = await fetch("/api/notifications");
       const json = await res.json();
-      if (json.success) {
-        setEvents(json.events || []);
-        setShowEvents(true);
-        setStatus(`�� ${json.eventsDetected} events detected`);
-      } else {
-        setStatus("❌ " + (json.error || "Unknown"));
-      }
-    } catch (e) {
-      setStatus("❌ " + String(e));
-    } finally {
-      setEventsLoading(false);
-      setTimeout(() => setStatus(""), 8000);
-    }
+      if (json.success) { setEvents(json.events || []); setShowEvents(true); setStatus(`📊 ${json.eventsDetected} events`); }
+      else setStatus("❌ " + (json.error || "Unknown"));
+    } catch (e) { setStatus("❌ " + String(e)); }
+    finally { setEventsLoading(false); setTimeout(() => setStatus(""), 8000); }
   }
 
   async function sendSmartAlerts() {
-    setEventsLoading(true);
-    setStatus("📤 Sending alerts...");
+    setEventsLoading(true); setStatus("📤 Sending...");
     try {
       const res = await fetch("/api/notifications?send=true");
       const json = await res.json();
       if (json.success) {
-        setEvents(json.events || []);
-        setShowEvents(true);
+        setEvents(json.events || []); setShowEvents(true);
         const ok = (json.sentResults || []).filter((r: any) => r.success).length;
-        setStatus(`✅ ${ok}/${json.sent} alerts sent!`);
-      } else {
-        setStatus("❌ " + (json.error || "Unknown"));
-      }
-    } catch (e) {
-      setStatus("❌ " + String(e));
-    } finally {
-      setEventsLoading(false);
-      setTimeout(() => setStatus(""), 8000);
-    }
+        setStatus(`✅ ${ok}/${json.sent} alerts sent`);
+      } else setStatus("❌ " + (json.error || "Unknown"));
+    } catch (e) { setStatus("❌ " + String(e)); }
+    finally { setEventsLoading(false); setTimeout(() => setStatus(""), 8000); }
   }
 
   async function sendTelegramTest() {
-    setSyncing(true);
-    setStatus("📤 Testing...");
+    setSyncing(true); setStatus("📤 Testing...");
     try {
       const res = await fetch("/api/telegram");
       const json = await res.json();
       setStatus(json.success ? "✅ Telegram works!" : "❌ " + (json.error || "Failed"));
-    } catch (e) {
-      setStatus("❌ " + String(e));
-    } finally {
-      setSyncing(false);
-      setTimeout(() => setStatus(""), 5000);
-    }
+    } catch (e) { setStatus("❌ " + String(e)); }
+    finally { setSyncing(false); setTimeout(() => setStatus(""), 5000); }
   }
 
-  useEffect(() => { fetchData(); const i = setInterval(fetchData, 5 * 60 * 1000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    fetchData();
+    // Check for OAuth success/error in URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("oauth_success")) {
+      setStatus("✅ YouTube connected! Refresh to see real CTR/retention data.");
+      window.history.replaceState({}, "", "/dashboard");
+    }
+    if (params.get("oauth_error")) {
+      setStatus("❌ OAuth error: " + params.get("oauth_error"));
+      window.history.replaceState({}, "", "/dashboard");
+    }
+    const i = setInterval(fetchData, 5 * 60 * 1000);
+    return () => clearInterval(i);
+  }, []);
 
   if (loading && !data) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-400 text-sm">Loading all videos...</p>
+          <p className="text-gray-400 text-sm">Loading...</p>
         </div>
       </div>
     );
@@ -166,7 +165,6 @@ export default function DashboardPage() {
     <div className="p-3 sm:p-4 lg:p-6">
       <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
 
-        {/* Header */}
         <div className="space-y-3">
           <div>
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white flex items-center gap-2 sm:gap-3">
@@ -175,31 +173,21 @@ export default function DashboardPage() {
             </h1>
             <p className="text-gray-400 mt-1 text-xs sm:text-sm">
               {data?.channel?.title || "Loading"} · {formatNumber(data?.channel?.subscribers || 0)} subs · {data?.videos?.length || 0} videos
+              {hasRealData && <span className="ml-2 text-green-400 text-[10px] bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">✓ REAL DATA</span>}
               {lastSync && <span className="text-gray-600 ml-2">Synced: {lastSync}</span>}
             </p>
           </div>
 
-          {/* Data Transparency Banner */}
-          <button onClick={() => setShowDataInfo(!showDataInfo)} className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300">
-            <Info size={12} /> {showDataInfo ? "Hide" : "Show"} data source info
-          </button>
-          {showDataInfo && (
-            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-xs space-y-2">
-              <p className="text-green-400"><strong>✅ 100% REAL data:</strong> Views, Likes, Comments, Subscribers, Engagement Rate, Views/Day</p>
-              <p className="text-yellow-400"><strong>⚠️ NOT available:</strong> CTR, Retention, Impressions, Watch Time, Revenue</p>
-              <p className="text-gray-400">These require YouTube Analytics API (OAuth) which needs channel owner verification. The current YouTube Data API v3 (your free API key) does NOT provide these metrics.</p>
-              <p className="text-gray-400">All scoring and alerts use ONLY verified real data.</p>
-            </div>
-          )}
+          <OAuthBanner />
 
           <div className="grid grid-cols-2 lg:flex lg:flex-wrap gap-2">
             <button onClick={previewEvents} disabled={eventsLoading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs sm:text-sm disabled:opacity-50">
               <Activity size={14} className={eventsLoading ? "animate-pulse" : ""} />
-              <span className="truncate">{eventsLoading ? "Detecting..." : "Preview Events"}</span>
+              {eventsLoading ? "..." : "Preview Events"}
             </button>
             <button onClick={sendSmartAlerts} disabled={eventsLoading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm disabled:opacity-50">
-              <Send size={14} className={eventsLoading ? "animate-pulse" : ""} />
-              <span className="truncate">{eventsLoading ? "Sending..." : "Send Alerts"}</span>
+              <Send size={14} />
+              Send Alerts
             </button>
             <button onClick={sendTelegramTest} disabled={syncing} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs sm:text-sm disabled:opacity-50">
               <Bell size={14} /> Test
@@ -222,14 +210,13 @@ export default function DashboardPage() {
           <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-3 sm:p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-white font-semibold flex items-center gap-2 text-sm sm:text-base">
-                <Activity size={16} className="text-purple-400" />
-                Events ({events.length}) <span className="text-xs text-gray-500">- all real data</span>
+                <Activity size={16} className="text-purple-400" />Events ({events.length})
               </h3>
               <button onClick={() => setShowEvents(false)} className="text-gray-500 hover:text-white"><X size={16} /></button>
             </div>
-            <div className="space-y-2 max-h-80 sm:max-h-96 overflow-y-auto">
+            <div className="space-y-2 max-h-80 overflow-y-auto">
               {events.map((e: any, i: number) => (
-                <div key={i} className={`flex items-start gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg border ${
+                <div key={i} className={`flex items-start gap-2 p-2 sm:p-3 rounded-lg border ${
                   e.severity === "critical" ? "bg-red-500/10 border-red-500/20" :
                   e.severity === "warning" ? "bg-yellow-500/10 border-yellow-500/20" :
                   e.severity === "success" ? "bg-green-500/10 border-green-500/20" :
@@ -239,13 +226,6 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] sm:text-xs font-medium text-gray-300">{e.type.replace(/_/g, " ").toUpperCase()}</p>
                     <p className="text-xs sm:text-sm text-white mt-0.5">{e.message}</p>
-                    {e.data && <div className="flex flex-wrap gap-1 sm:gap-2 mt-2">
-                      {Object.entries(e.data).slice(0, 6).map(([k, v]) => (
-                        <span key={k} className="text-[10px] sm:text-xs bg-black/30 px-1.5 sm:px-2 py-0.5 rounded text-gray-400 truncate max-w-full">
-                          {k}: <span className="text-white">{String(v).substring(0, 35)}</span>
-                        </span>
-                      ))}
-                    </div>}
                   </div>
                 </div>
               ))}
@@ -253,74 +233,28 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Stats - ALL REAL */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 lg:gap-4">
-          <StatCard title="Total Views" value={data?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" format="number" subtitle="100% real" />
-          <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" subtitle="100% real" />
-          <StatCard title="Total Likes" value={data?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" format="number" subtitle="100% real" />
-          <StatCard title="Total Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" subtitle="100% real" />
-          <StatCard title="Avg Engagement" value={parseFloat((data?.stats?.avgEngagement || 0).toFixed(2))} icon={<TrendingUp size={16} />} color={(data?.stats?.avgEngagement || 0) >= 3 ? "green" : "yellow"} format="percent" subtitle="Likes+Comments/Views" />
+        {/* Stats - mixes REAL and calculated metrics */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+          <StatCard title="Total Views" value={data?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" format="number" />
+          <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" />
+          <StatCard title="Total Likes" value={data?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" format="number" />
+          {data?.stats?.avgCTR !== null && data?.stats?.avgCTR !== undefined ? (
+            <StatCard title="Avg CTR" value={parseFloat(data.stats.avgCTR.toFixed(2))} icon={<TrendingUp size={16} />} color={data.stats.avgCTR >= 5 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
+          ) : (
+            <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="purple" format="percent" subtitle="Calculated" />
+          )}
+          {data?.stats?.avgRetention !== null && data?.stats?.avgRetention !== undefined ? (
+            <StatCard title="Avg Retention" value={parseFloat(data.stats.avgRetention.toFixed(1))} icon={<Clock size={16} />} color={data.stats.avgRetention >= 35 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
+          ) : (
+            <StatCard title="Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" />
+          )}
+          <StatCard title={hasRealData ? "Watch Time" : "Engagement"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={hasRealData ? <Clock size={16} /> : <TrendingUp size={16} />} color="cyan" format={hasRealData ? "number" : "percent"} subtitle={hasRealData ? "hours ✓ REAL" : "rate"} />
         </div>
 
-        {/* Best/Worst */}
         {topVideo && worstVideo && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-            <div className="rounded-xl border border-green-500/20 bg-green-500/5">
-              <div className="p-3 sm:p-4">
-                <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                  <Trophy size={16} className="text-yellow-400" />
-                  <span className="text-xs sm:text-sm font-medium text-green-400">BEST Performing (Real Score)</span>
-                </div>
-                <p className="text-white font-medium text-xs sm:text-sm mb-2 line-clamp-2">{topVideo.title}</p>
-                <div className="flex gap-2 sm:gap-3 text-[10px] sm:text-xs text-gray-400 flex-wrap">
-                  <span>Views: {formatNumber(topVideo.views)}</span>
-                  <span>Likes: {formatNumber(topVideo.likes)}</span>
-                  <span>Comments: {formatNumber(topVideo.comments)}</span>
-                  <span className="text-green-400 font-bold">Score: {topVideo.score}/100</span>
-                </div>
-                <button onClick={() => analyzeVideo(topVideo.youtube_id)} disabled={analyzing[topVideo.youtube_id]} className="mt-3 text-xs text-green-400 hover:text-green-300 flex items-center gap-1 disabled:opacity-50">
-                  <Brain size={12} />
-                  {analyzing[topVideo.youtube_id] ? "Analyzing..." : analyses[topVideo.youtube_id] ? "Re-analyze" : "Why did this work?"}
-                </button>
-              </div>
-              {analyses[topVideo.youtube_id] && (
-                <div className="border-t border-green-500/20">
-                  <button onClick={() => setTopExpanded(!topExpanded)} className="flex items-center gap-2 text-xs sm:text-sm text-green-400 w-full text-left px-3 sm:px-4 py-3">
-                    <CheckCircle size={14} />
-                    <span className="font-medium">AI Analysis {topExpanded ? "▲" : "▼"}</span>
-                  </button>
-                  {topExpanded && <div className="px-3 sm:px-4 pb-3 sm:pb-4"><AnalysisPanel analysis={analyses[topVideo.youtube_id]} /></div>}
-                </div>
-              )}
-            </div>
-            <div className="rounded-xl border border-red-500/20 bg-red-500/5">
-              <div className="p-3 sm:p-4">
-                <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                  <AlertTriangle size={16} className="text-red-400" />
-                  <span className="text-xs sm:text-sm font-medium text-red-400">WORST Performing (Real Score)</span>
-                </div>
-                <p className="text-white font-medium text-xs sm:text-sm mb-2 line-clamp-2">{worstVideo.title}</p>
-                <div className="flex gap-2 sm:gap-3 text-[10px] sm:text-xs text-gray-400 flex-wrap">
-                  <span>Views: {formatNumber(worstVideo.views)}</span>
-                  <span>Likes: {formatNumber(worstVideo.likes)}</span>
-                  <span>Comments: {formatNumber(worstVideo.comments)}</span>
-                  <span className="text-red-400 font-bold">Score: {worstVideo.score}/100</span>
-                </div>
-                <button onClick={() => analyzeVideo(worstVideo.youtube_id)} disabled={analyzing[worstVideo.youtube_id]} className="mt-3 text-xs text-red-400 hover:text-red-300 flex items-center gap-1 disabled:opacity-50">
-                  <Brain size={12} />
-                  {analyzing[worstVideo.youtube_id] ? "Analyzing..." : analyses[worstVideo.youtube_id] ? "Re-analyze" : "Why did this fail?"}
-                </button>
-              </div>
-              {analyses[worstVideo.youtube_id] && (
-                <div className="border-t border-red-500/20">
-                  <button onClick={() => setWorstExpanded(!worstExpanded)} className="flex items-center gap-2 text-xs sm:text-sm text-red-400 w-full text-left px-3 sm:px-4 py-3">
-                    <AlertCircle size={14} />
-                    <span className="font-medium">AI Analysis {worstExpanded ? "▲" : "▼"}</span>
-                  </button>
-                  {worstExpanded && <div className="px-3 sm:px-4 pb-3 sm:pb-4"><AnalysisPanel analysis={analyses[worstVideo.youtube_id]} /></div>}
-                </div>
-              )}
-            </div>
+            <BestWorstCard video={topVideo} type="best" expanded={topExpanded} setExpanded={setTopExpanded} analysis={analyses[topVideo.youtube_id]} analyzing={analyzing[topVideo.youtube_id]} onAnalyze={analyzeVideo} />
+            <BestWorstCard video={worstVideo} type="worst" expanded={worstExpanded} setExpanded={setWorstExpanded} analysis={analyses[worstVideo.youtube_id]} analyzing={analyzing[worstVideo.youtube_id]} onAnalyze={analyzeVideo} />
           </div>
         )}
 
@@ -334,10 +268,7 @@ export default function DashboardPage() {
             </span>
           </div>
           {(!data?.videos || data.videos.length === 0) ? (
-            <div className="text-center py-16 sm:py-20 text-gray-500">
-              <BarChart3 size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="text-sm">No videos found</p>
-            </div>
+            <div className="text-center py-16 text-gray-500"><BarChart3 size={48} className="mx-auto mb-4 opacity-30" /><p>No videos</p></div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
               {data.videos.map((video: any, i: number) => (
@@ -347,6 +278,43 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function BestWorstCard({ video, type, expanded, setExpanded, analysis, analyzing, onAnalyze }: any) {
+  const isBest = type === "best";
+  const color = isBest ? "green" : "red";
+  return (
+    <div className={`rounded-xl border border-${color}-500/20 bg-${color}-500/5`}>
+      <div className="p-3 sm:p-4">
+        <div className="flex items-center gap-2 mb-2 sm:mb-3">
+          {isBest ? <Trophy size={16} className="text-yellow-400" /> : <AlertTriangle size={16} className={`text-${color}-400`} />}
+          <span className={`text-xs sm:text-sm font-medium text-${color}-400`}>{isBest ? "BEST" : "WORST"} Performing</span>
+          {video.has_real_analytics && <span className="text-[10px] bg-green-500/10 text-green-400 px-1.5 py-0.5 rounded">REAL</span>}
+        </div>
+        <p className="text-white font-medium text-xs sm:text-sm mb-2 line-clamp-2">{video.title}</p>
+        <div className="flex gap-2 text-[10px] sm:text-xs text-gray-400 flex-wrap">
+          <span>Views: {formatNumber(video.views)}</span>
+          {video.ctr !== null && video.ctr !== undefined && <span className="text-cyan-400">CTR: {video.ctr}%</span>}
+          {video.avg_view_percentage !== null && video.avg_view_percentage !== undefined && <span className="text-cyan-400">Ret: {video.avg_view_percentage}%</span>}
+          <span>Likes: {formatNumber(video.likes)}</span>
+          <span className={`text-${color}-400 font-bold`}>Score: {video.score}/100</span>
+        </div>
+        <button onClick={() => onAnalyze(video.youtube_id)} disabled={analyzing} className={`mt-3 text-xs text-${color}-400 hover:text-${color}-300 flex items-center gap-1 disabled:opacity-50`}>
+          <Brain size={12} />
+          {analyzing ? "Analyzing..." : analysis ? "Re-analyze" : isBest ? "Why did this work?" : "Why did this fail?"}
+        </button>
+      </div>
+      {analysis && (
+        <div className={`border-t border-${color}-500/20`}>
+          <button onClick={() => setExpanded(!expanded)} className={`flex items-center gap-2 text-xs sm:text-sm text-${color}-400 w-full text-left px-3 sm:px-4 py-3`}>
+            {isBest ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
+            <span className="font-medium">AI Analysis {expanded ? "▲" : "▼"}</span>
+          </button>
+          {expanded && <div className="px-3 sm:px-4 pb-3 sm:pb-4"><AnalysisPanel analysis={analysis} /></div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -386,14 +354,7 @@ function AnalysisPanel({ analysis }: { analysis: any }) {
 }
 
 function B({ c, l, t }: { c: string; l: string; t: string }) {
-  const m: Record<string, string> = {
-    purple: "bg-purple-500/10 border-purple-500/20 text-purple-400",
-    blue: "bg-blue-500/10 border-blue-500/20 text-blue-400",
-    cyan: "bg-cyan-500/10 border-cyan-500/20 text-cyan-400",
-    yellow: "bg-yellow-500/10 border-yellow-500/20 text-yellow-400",
-    orange: "bg-orange-500/10 border-orange-500/20 text-orange-400",
-    pink: "bg-pink-500/10 border-pink-500/20 text-pink-400"
-  };
+  const m: Record<string, string> = { purple: "bg-purple-500/10 border-purple-500/20 text-purple-400", blue: "bg-blue-500/10 border-blue-500/20 text-blue-400", cyan: "bg-cyan-500/10 border-cyan-500/20 text-cyan-400", yellow: "bg-yellow-500/10 border-yellow-500/20 text-yellow-400", orange: "bg-orange-500/10 border-orange-500/20 text-orange-400", pink: "bg-pink-500/10 border-pink-500/20 text-pink-400" };
   const cls = m[c] || m.blue;
   return <div className={"border rounded-lg p-2 sm:p-3 " + cls.split(" ").slice(0, 2).join(" ")}><p className={"text-xs font-medium mb-1 " + cls.split(" ")[2]}>{l}</p><p className="text-xs text-gray-300 leading-relaxed">{t}</p></div>;
 }
