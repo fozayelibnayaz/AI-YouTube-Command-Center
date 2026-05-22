@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { formatNumber, formatDuration, getCTRRating, getRetentionRating, getEngagementRating } from "@/lib/utils";
-import { Eye, ThumbsUp, MessageSquare, Clock, Brain, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, Lock } from "lucide-react";
+import { formatNumber, formatDuration, getRetentionRating, getEngagementRating } from "@/lib/utils";
+import { Eye, ThumbsUp, MessageSquare, Clock, Brain, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, Info, Share2, UserPlus } from "lucide-react";
 
 interface Props {
   video: any;
@@ -18,9 +18,11 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
   const likes = video.likes || 0;
   const comments = video.comments || 0;
   const score = video.score || 0;
-  const ctr = video.ctr; // can be null, 0, or a real number
   const retention = video.avg_view_percentage;
-  const hasRealCTR = ctr !== null && ctr !== undefined;
+  const watchTime = video.watch_time_minutes;
+  const avgViewDur = video.avg_view_duration_seconds;
+  const shares = video.shares || 0;
+  const subsGained = video.subscribers_gained || 0;
   const hasRealRetention = retention !== null && retention !== undefined;
   const hasRealAnalytics = video.has_real_analytics === true;
 
@@ -71,22 +73,21 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
             </span>
             <span className="text-[10px] sm:text-xs text-gray-400">{Math.round(viewsPerDay)}/day</span>
             {hasRealAnalytics && (
-              <span className="text-[9px] sm:text-[10px] bg-green-500/10 text-green-400 px-1 py-0.5 rounded border border-green-500/20">REAL DATA</span>
+              <span className="text-[9px] sm:text-[10px] bg-green-500/10 text-green-400 px-1 py-0.5 rounded border border-green-500/20">REAL</span>
             )}
           </div>
         </div>
       </div>
 
+      {/* Primary stats grid */}
       <div className="grid grid-cols-4 gap-0 border-t border-white/5">
         {[
           { label: "Views", value: formatNumber(views), icon: <Eye size={10} />, color: "text-blue-400" },
           { label: "Likes", value: formatNumber(likes), icon: <ThumbsUp size={10} />, color: "text-green-400" },
           { label: "Comments", value: formatNumber(comments), icon: <MessageSquare size={10} />, color: "text-purple-400" },
           {
-            label: hasRealAnalytics && video.watch_time_minutes != null ? "Watch Min" : "Views/Day",
-            value: hasRealAnalytics && video.watch_time_minutes != null
-              ? Math.round(video.watch_time_minutes) + "m"
-              : Math.round(viewsPerDay) + "/d",
+            label: "Avg Watch",
+            value: avgViewDur ? formatDuration(avgViewDur) : (Math.round(viewsPerDay) + "/d"),
             icon: <Clock size={10} />, color: "text-yellow-400"
           },
         ].map(m => (
@@ -100,43 +101,37 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
         ))}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 p-3 sm:p-4 border-t border-white/5">
-        {/* CTR - Show real if available, else "Need impressions" message */}
-        {hasRealCTR ? (
-          <PerformanceBar
-            label="CTR" badge="✓ REAL"
-            rating={getCTRRating(ctr)}
-            value={ctr} max={10}
-            colorThresholds={{ good: 7, ok: 4 }}
-            displayValue={ctr.toFixed(2) + "%"}
-          />
-        ) : hasRealAnalytics ? (
-          <div className="bg-black/20 rounded-lg p-2 sm:p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] sm:text-xs text-gray-400">CTR</span>
-              <span className="text-[10px] sm:text-xs text-gray-500">Not enough impressions</span>
+      {/* Secondary stats (only if OAuth) */}
+      {hasRealAnalytics && (
+        <div className="grid grid-cols-3 gap-0 border-t border-white/5 bg-black/20">
+          <div className="flex flex-col items-center py-2 border-r border-white/5">
+            <div className="flex items-center gap-1 text-cyan-400 mb-0.5">
+              <Clock size={10} />
+              <span className="text-[9px] sm:text-xs">Watch Time</span>
             </div>
-            <div className="w-full bg-white/5 rounded-full h-1.5">
-              <div className="h-1.5 rounded-full bg-gray-700" style={{ width: "100%" }} />
-            </div>
-            <p className="text-[10px] sm:text-xs text-gray-600 mt-1 truncate">YouTube hasn't shown impressions yet</p>
+            <span className="text-white text-xs sm:text-sm font-semibold">
+              {watchTime != null ? Math.round(watchTime) + " min" : "—"}
+            </span>
           </div>
-        ) : (
-          <div className="bg-black/20 rounded-lg p-2 sm:p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] sm:text-xs text-gray-400 flex items-center gap-1">
-                <Lock size={9} /> CTR
-              </span>
-              <span className="text-[10px] sm:text-xs font-bold text-gray-600">Locked</span>
+          <div className="flex flex-col items-center py-2 border-r border-white/5">
+            <div className="flex items-center gap-1 text-pink-400 mb-0.5">
+              <Share2 size={10} />
+              <span className="text-[9px] sm:text-xs">Shares</span>
             </div>
-            <div className="w-full bg-white/5 rounded-full h-1.5">
-              <div className="h-1.5 rounded-full bg-gray-700" style={{ width: "100%" }} />
-            </div>
-            <p className="text-[10px] sm:text-xs text-gray-600 mt-1 truncate">Connect YouTube to unlock</p>
+            <span className="text-white text-xs sm:text-sm font-semibold">{formatNumber(shares)}</span>
           </div>
-        )}
+          <div className="flex flex-col items-center py-2">
+            <div className="flex items-center gap-1 text-orange-400 mb-0.5">
+              <UserPlus size={10} />
+              <span className="text-[9px] sm:text-xs">Subs +</span>
+            </div>
+            <span className="text-white text-xs sm:text-sm font-semibold">{formatNumber(subsGained)}</span>
+          </div>
+        </div>
+      )}
 
-        {/* Retention OR Engagement fallback */}
+      {/* Retention + Engagement bars */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 p-3 sm:p-4 border-t border-white/5">
         {hasRealRetention ? (
           <PerformanceBar
             label="Retention" badge="✓ REAL"
@@ -146,19 +141,40 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
             displayValue={retention.toFixed(1) + "%"}
           />
         ) : (
-          <PerformanceBar
-            label="Engagement" badge="calc"
-            rating={engRating}
-            value={engRate} max={10}
-            colorThresholds={{ good: 5, ok: 2 }}
-            displayValue={engRate.toFixed(2) + "%"}
-          />
+          <div className="bg-black/20 rounded-lg p-2 sm:p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] sm:text-xs text-gray-400">Retention</span>
+              <span className="text-[10px] sm:text-xs text-gray-500">No data</span>
+            </div>
+            <div className="w-full bg-white/5 rounded-full h-1.5">
+              <div className="h-1.5 rounded-full bg-gray-700" />
+            </div>
+            <p className="text-[10px] sm:text-xs text-gray-600 mt-1">Not enough watch data</p>
+          </div>
         )}
+
+        <PerformanceBar
+          label="Engagement" badge="REAL"
+          rating={engRating}
+          value={engRate} max={10}
+          colorThresholds={{ good: 5, ok: 2 }}
+          displayValue={engRate.toFixed(2) + "%"}
+        />
       </div>
+
+      {/* Info note about CTR */}
+      {hasRealAnalytics && (
+        <div className="px-3 sm:px-4 pb-2 -mt-1">
+          <p className="text-[10px] text-gray-600 flex items-start gap-1">
+            <Info size={9} className="mt-0.5 flex-shrink-0" />
+            <span>CTR/Impressions not available via YouTube API. View in <a href={"https://studio.youtube.com/video/" + video.youtube_id + "/analytics"} target="_blank" rel="noopener" className="text-blue-400 hover:underline">YouTube Studio</a>.</span>
+          </p>
+        </div>
+      )}
 
       {analysis && (
         <div className="border-t border-white/5">
-          <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 text-xs sm:text-sm text-purple-400 hover:text-purple-300 transition-colors w-full text-left p-3 sm:p-4">
+          <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 text-xs sm:text-sm text-purple-400 hover:text-purple-300 w-full text-left p-3 sm:p-4">
             <Brain size={14} />
             <span className="font-medium">AI Analysis</span>
             {expanded ? <ChevronUp size={14} className="ml-auto" /> : <ChevronDown size={14} className="ml-auto" />}
@@ -263,7 +279,7 @@ function PerformanceBar({ label, badge, rating, value, max, colorThresholds, dis
       <div className="flex items-center justify-between mb-1">
         <span className="text-[10px] sm:text-xs text-gray-400 flex items-center gap-1">
           {label}
-          {badge && <span className={`text-[8px] sm:text-[9px] px-1 py-0.5 rounded ${badge === "✓ REAL" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"}`}>{badge}</span>}
+          {badge && <span className={`text-[8px] sm:text-[9px] px-1 py-0.5 rounded ${badge === "✓ REAL" || badge === "REAL" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"}`}>{badge}</span>}
         </span>
         <span className={"text-[10px] sm:text-xs font-bold " + rating.color}>{displayValue}</span>
       </div>

@@ -10,9 +10,7 @@ function dateString(daysAgo: number): string {
 
 async function getChannelFilter(): Promise<string> {
   const channelId = await getStoredChannelId();
-  if (channelId && channelId.length > 5) {
-    return "channel==" + channelId;
-  }
+  if (channelId && channelId.length > 5) return "channel==" + channelId;
   return "channel==MINE";
 }
 
@@ -25,7 +23,7 @@ async function fetchAnalytics(params: Record<string, string>): Promise<any> {
   const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
   const data = await res.json();
   if (data.error) {
-    console.error("Analytics API error:", data.error.message, "URL:", url);
+    console.error("Analytics API error:", data.error.message);
     throw new Error(data.error.message || "Analytics API error");
   }
   return data;
@@ -41,24 +39,28 @@ function parseRows(data: any): any[] {
   });
 }
 
-export async function getVideoAnalytics(videoId: string, daysBack: number = 90): Promise<any> {
-  const data = await fetchAnalytics({
-    startDate: dateString(daysBack), endDate: dateString(0),
-    metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost",
-    dimensions: "video", filters: "video==" + videoId,
-  });
-  return parseRows(data)[0] || null;
-}
+// VALID METRICS (after YouTube API changes):
+// views, estimatedMinutesWatched, averageViewDuration, averageViewPercentage,
+// likes, dislikes, comments, shares, subscribersGained, subscribersLost,
+// videosAddedToPlaylists, videosRemovedFromPlaylists, cardImpressions,
+// cardClicks, cardClickRate, cardTeaserImpressions, cardTeaserClicks,
+// cardTeaserClickRate, annotationImpressions, annotationClickableImpressions,
+// annotationClicks, annotationClickThroughRate, annotationClosableImpressions,
+// annotationCloses, annotationCloseRate, estimatedRevenue, estimatedAdRevenue,
+// grossRevenue, cpm, playbackBasedCpm, adImpressions, monetizedPlaybacks
 
-export async function getVideoCTR(videoId: string, daysBack: number = 365): Promise<any> {
+export async function getVideoAnalytics(videoId: string, daysBack: number = 90): Promise<any> {
   try {
     const data = await fetchAnalytics({
       startDate: dateString(daysBack), endDate: dateString(0),
-      metrics: "impressions,impressionClickThroughRate",
+      metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost,cardImpressions,cardClicks,cardClickRate",
       dimensions: "video", filters: "video==" + videoId,
     });
     return parseRows(data)[0] || null;
-  } catch { return null; }
+  } catch (e) {
+    console.error("getVideoAnalytics:", e);
+    return null;
+  }
 }
 
 export async function getRetentionCurve(videoId: string): Promise<any[]> {
@@ -74,14 +76,16 @@ export async function getRetentionCurve(videoId: string): Promise<any[]> {
 }
 
 export async function getTrafficSources(videoId?: string, daysBack: number = 30): Promise<any[]> {
-  const params: any = {
-    startDate: dateString(daysBack), endDate: dateString(0),
-    metrics: "views,estimatedMinutesWatched,averageViewDuration",
-    dimensions: "insightTrafficSourceType", sort: "-views",
-  };
-  if (videoId) params.filters = "video==" + videoId;
-  const data = await fetchAnalytics(params);
-  return parseRows(data);
+  try {
+    const params: any = {
+      startDate: dateString(daysBack), endDate: dateString(0),
+      metrics: "views,estimatedMinutesWatched,averageViewDuration",
+      dimensions: "insightTrafficSourceType", sort: "-views",
+    };
+    if (videoId) params.filters = "video==" + videoId;
+    const data = await fetchAnalytics(params);
+    return parseRows(data);
+  } catch { return []; }
 }
 
 export async function getDemographics(daysBack: number = 90): Promise<any> {
@@ -132,7 +136,7 @@ export async function getRevenue(daysBack: number = 30): Promise<any> {
   try {
     const data = await fetchAnalytics({
       startDate: dateString(daysBack), endDate: dateString(0),
-      metrics: "estimatedRevenue,estimatedAdRevenue,estimatedRedPartnerRevenue,grossRevenue,cpm,playbackBasedCpm,adImpressions,monetizedPlaybacks",
+      metrics: "estimatedRevenue,estimatedAdRevenue,grossRevenue,cpm,playbackBasedCpm,adImpressions,monetizedPlaybacks",
     });
     return parseRows(data)[0] || null;
   } catch { return null; }
@@ -164,27 +168,22 @@ export async function getSearchTerms(videoId?: string, daysBack: number = 30): P
 }
 
 /**
- * Get CTR for batch of videos.
- * CTR is finicky - needs LONG date range (365 days) and only returns videos with enough impressions.
+ * Get card CTR (closest equivalent to impression CTR available via API)
+ * Note: True impression CTR requires YouTube Studio - not exposed in API
  */
-async function getBatchCTR(videoIds: string[], daysBack: number = 365): Promise<Record<string, any>> {
+async function getBatchCardMetrics(videoIds: string[], daysBack: number = 365): Promise<Record<string, any>> {
   const result: Record<string, any> = {};
   if (videoIds.length === 0) return result;
-
-  // YouTube Analytics API filter limit is 500 chars roughly
-  // Each video ID is ~11 chars + comma = 12 chars
-  // Safe batch size: 30 videos at a time
   const batchSize = 30;
 
   for (let i = 0; i < videoIds.length; i += batchSize) {
     const batch = videoIds.slice(i, i + batchSize);
     const filter = "video==" + batch.join(",");
-
     try {
       const data = await fetchAnalytics({
         startDate: dateString(daysBack),
         endDate: dateString(0),
-        metrics: "impressions,impressionClickThroughRate",
+        metrics: "cardImpressions,cardClicks,cardClickRate",
         dimensions: "video",
         filters: filter,
         maxResults: String(batchSize),
@@ -192,37 +191,31 @@ async function getBatchCTR(videoIds: string[], daysBack: number = 365): Promise<
       const rows = parseRows(data);
       for (const r of rows) {
         result[r.video] = {
-          impressions: r.impressions || 0,
-          ctr: r.impressionClickThroughRate != null
-            ? parseFloat((r.impressionClickThroughRate * 100).toFixed(2))
-            : null,
+          cardImpressions: r.cardImpressions || 0,
+          cardClicks: r.cardClicks || 0,
+          cardCTR: r.cardClickRate != null ? parseFloat((r.cardClickRate * 100).toFixed(2)) : null,
         };
       }
     } catch (e) {
-      console.error("CTR batch failed:", e);
+      console.error("Card metrics batch failed:", e);
     }
   }
-
   return result;
 }
 
-/**
- * Get core analytics for batch of videos (views, retention, watch time, etc.)
- */
 async function getBatchCore(videoIds: string[], daysBack: number = 90): Promise<Record<string, any>> {
   const result: Record<string, any> = {};
   if (videoIds.length === 0) return result;
-
   const batchSize = 50;
+
   for (let i = 0; i < videoIds.length; i += batchSize) {
     const batch = videoIds.slice(i, i + batchSize);
     const filter = "video==" + batch.join(",");
-
     try {
       const data = await fetchAnalytics({
         startDate: dateString(daysBack),
         endDate: dateString(0),
-        metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained",
+        metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained",
         dimensions: "video",
         filters: filter,
         maxResults: String(batchSize),
@@ -235,28 +228,32 @@ async function getBatchCore(videoIds: string[], daysBack: number = 90): Promise<
       console.error("Core batch failed:", e);
     }
   }
-
   return result;
 }
 
 export async function getBatchVideoAnalytics(videoIds: string[], daysBack: number = 90): Promise<Record<string, any>> {
   if (videoIds.length === 0) return {};
 
-  // Fetch core analytics (90 days) AND CTR (365 days) in parallel
-  const [core, ctrMap] = await Promise.all([
+  // Fetch all in parallel
+  const [core, cards] = await Promise.all([
     getBatchCore(videoIds, daysBack),
-    getBatchCTR(videoIds, 365), // CTR needs longer range
+    getBatchCardMetrics(videoIds, 365),
   ]);
 
   const result: Record<string, any> = {};
   for (const id of videoIds) {
     const c = core[id];
-    const ctr = ctrMap[id];
-    if (c || ctr) {
+    const card = cards[id];
+    if (c || card) {
       result[id] = {
         ...(c || {}),
-        impressions: ctr?.impressions || null,
-        ctr: ctr?.ctr ?? null,
+        // Card-based engagement (the closest to CTR we can get from API)
+        cardImpressions: card?.cardImpressions || null,
+        cardClicks: card?.cardClicks || null,
+        cardCTR: card?.cardCTR ?? null,
+        // CTR/impressions NOT available via API - YouTube Studio only
+        ctr: null,
+        impressions: null,
       };
     }
   }
