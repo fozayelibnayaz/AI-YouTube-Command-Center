@@ -5,7 +5,7 @@ import { VideoCard } from "@/components/dashboard/video-card";
 import { OAuthBanner } from "@/components/oauth-banner";
 import { calculatePerformanceScore, formatNumber } from "@/lib/utils";
 import {
-  Eye, Users, Heart, MessageSquare, TrendingUp, Clock,
+  Eye, Users, Heart, MessageSquare, TrendingUp, Clock, Share2,
   Bell, RefreshCw, Trophy, AlertTriangle, Brain, BarChart3, Zap,
   ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send, Calendar
 } from "lucide-react";
@@ -63,19 +63,23 @@ export default function DashboardPage() {
       const totalViews = videos.reduce((s: number, v: any) => s + (v.views || 0), 0);
       const totalLikes = videos.reduce((s: number, v: any) => s + (v.likes || 0), 0);
       const totalComments = videos.reduce((s: number, v: any) => s + (v.comments || 0), 0);
+      const totalShares = videos.reduce((s: number, v: any) => s + (v.shares || 0), 0);
       const totalWatchTime = videos.reduce((s: number, v: any) => s + (v.watch_time_minutes || 0), 0);
+      const totalSubsGained = videos.reduce((s: number, v: any) => s + (v.subscribers_gained || 0), 0);
       const avgEng = totalViews > 0 ? ((totalLikes + totalComments) / totalViews) * 100 : 0;
 
-      // Only include videos that have non-null CTR/Retention in averages
-      const ctrVids = videos.filter((v: any) => v.ctr !== null && v.ctr !== undefined);
       const retVids = videos.filter((v: any) => v.avg_view_percentage !== null && v.avg_view_percentage !== undefined);
-      const avgCTR = ctrVids.length > 0 ? ctrVids.reduce((s: number, v: any) => s + v.ctr, 0) / ctrVids.length : null;
       const avgRetention = retVids.length > 0 ? retVids.reduce((s: number, v: any) => s + v.avg_view_percentage, 0) / retVids.length : null;
 
       setData({
         channel: ch.data,
         videos,
-        stats: { totalViews, totalLikes, totalComments, avgEng, avgCTR, avgRetention, totalWatchTime, realCount, total: videos.length, ctrVidsCount: ctrVids.length },
+        stats: {
+          totalViews, totalLikes, totalComments, totalShares, totalWatchTime,
+          totalSubsGained, avgEng, avgRetention,
+          realCount, total: videos.length,
+          activeVideos: videos.filter((v: any) => (v.views || 0) > 0).length,
+        },
       });
       setLastSync(new Date().toLocaleTimeString());
     } catch (e) {
@@ -103,8 +107,8 @@ export default function DashboardPage() {
       const json = await res.json();
       if (json.success) {
         setAnalyses(prev => ({ ...prev, [id]: json.data }));
-        const topId = data?.videos?.[0]?.youtube_id;
-        const worstId = data?.videos?.[data?.videos?.length - 1]?.youtube_id;
+        const topId = getBestWorst().best?.youtube_id;
+        const worstId = getBestWorst().worst?.youtube_id;
         if (id === topId) setTopExpanded(true);
         if (id === worstId) setWorstExpanded(true);
       }
@@ -118,34 +122,58 @@ export default function DashboardPage() {
     try {
       const res = await fetch("/api/notifications");
       const json = await res.json();
-      if (json.success) { setEvents(json.events || []); setShowEvents(true); setStatus(`📊 ${json.eventsDetected} events`); }
-      else setStatus("❌ " + (json.error || "Unknown"));
-    } catch (e) { setStatus("❌ " + String(e)); }
-    finally { setEventsLoading(false); setTimeout(() => setStatus(""), 8000); }
-  }
-
-  async function sendSmartAlerts() {
-    setEventsLoading(true); setStatus("📤 Sending...");
-    try {
-      const res = await fetch("/api/notifications?send=true");
-      const json = await res.json();
       if (json.success) {
-        setEvents(json.events || []); setShowEvents(true);
-        const ok = (json.sentResults || []).filter((r: any) => r.success).length;
-        setStatus(`✅ ${ok}/${json.sent} alerts sent`);
+        setEvents(json.events || []);
+        setShowEvents(true);
+        setStatus(`📊 ${json.eventsDetected} unique events detected`);
       } else setStatus("❌ " + (json.error || "Unknown"));
     } catch (e) { setStatus("❌ " + String(e)); }
     finally { setEventsLoading(false); setTimeout(() => setStatus(""), 8000); }
   }
 
+  async function sendSmartAlerts() {
+    setEventsLoading(true); setStatus("📤 Sending alerts to Telegram...");
+    try {
+      const res = await fetch("/api/notifications?send=true");
+      const json = await res.json();
+      if (json.success) {
+        setEvents(json.events || []);
+        setShowEvents(true);
+        if (json.sentSuccess === json.sent) {
+          setStatus(`✅ All ${json.sentSuccess} alerts sent successfully!`);
+        } else {
+          const errors = json.uniqueErrors?.join("; ") || "Unknown error";
+          setStatus(`⚠️ ${json.sentSuccess}/${json.sent} sent. Errors: ${errors}\n→ Visit /api/telegram-debug to diagnose`);
+        }
+      } else setStatus("❌ " + (json.error || "Unknown"));
+    } catch (e) { setStatus("❌ " + String(e)); }
+    finally { setEventsLoading(false); setTimeout(() => setStatus(""), 15000); }
+  }
+
   async function sendTelegramTest() {
-    setSyncing(true); setStatus("📤 Testing...");
+    setSyncing(true); setStatus("�� Testing Telegram...");
     try {
       const res = await fetch("/api/telegram");
       const json = await res.json();
-      setStatus(json.success ? "✅ Telegram works!" : "❌ " + (json.error || "Failed"));
+      if (json.success) {
+        setStatus("✅ Telegram works! Check your chat.");
+      } else {
+        setStatus(`❌ Telegram failed: ${json.error || "Unknown"}\n→ Visit /api/telegram-debug to diagnose`);
+      }
     } catch (e) { setStatus("❌ " + String(e)); }
-    finally { setSyncing(false); setTimeout(() => setStatus(""), 5000); }
+    finally { setSyncing(false); setTimeout(() => setStatus(""), 10000); }
+  }
+
+  // SMART best/worst that ignores 0-view videos
+  function getBestWorst() {
+    if (!data?.videos?.length) return { best: null, worst: null };
+    const active = data.videos.filter((v: any) => (v.views || 0) > 0);
+    if (active.length === 0) return { best: null, worst: null };
+    const sorted = [...active].sort((a, b) => (b.score || 0) - (a.score || 0));
+    return {
+      best: sorted[0],
+      worst: sorted.length > 1 ? sorted[sorted.length - 1] : null,
+    };
   }
 
   useEffect(() => {
@@ -174,8 +202,7 @@ export default function DashboardPage() {
     );
   }
 
-  const topVideo = data?.videos?.[0];
-  const worstVideo = data?.videos?.[data?.videos?.length - 1];
+  const { best: topVideo, worst: worstVideo } = getBestWorst();
 
   return (
     <div className="p-3 sm:p-4 lg:p-6">
@@ -189,14 +216,14 @@ export default function DashboardPage() {
             </h1>
             <p className="text-gray-400 mt-1 text-xs sm:text-sm">
               {data?.channel?.title || "Loading"} · {formatNumber(data?.channel?.subscribers || 0)} subs · {data?.videos?.length || 0} videos
-              {hasRealData && <span className="ml-2 text-green-400 text-[10px] bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">✓ REAL DATA</span>}
+              ({data?.stats?.activeVideos || 0} with views)
+              {hasRealData && <span className="ml-2 text-green-400 text-[10px] bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">✓ REAL</span>}
               {lastSync && <span className="text-gray-600 ml-2">Synced: {lastSync}</span>}
             </p>
           </div>
 
           <OAuthBanner />
 
-          {/* Date Range Selector */}
           <div className="rounded-xl border border-white/10 bg-white/5 p-3">
             <div className="flex items-center gap-2 mb-2">
               <Calendar size={14} className="text-blue-400" />
@@ -219,7 +246,7 @@ export default function DashboardPage() {
               ))}
             </div>
             <p className="text-[10px] sm:text-xs text-gray-500 mt-2">
-              {dateRange === 3650 ? "Showing all-time data" : `Showing data from last ${dateRange} days`}
+              {dateRange === 3650 ? "All-time" : `Last ${dateRange} days`}
             </p>
           </div>
 
@@ -244,6 +271,7 @@ export default function DashboardPage() {
           <div className={`p-3 rounded-lg text-xs sm:text-sm whitespace-pre-wrap break-words ${
             status.includes("❌") ? "bg-red-500/10 border border-red-500/30 text-red-400" :
             status.includes("✅") ? "bg-green-500/10 border border-green-500/30 text-green-400" :
+            status.includes("⚠️") ? "bg-yellow-500/10 border border-yellow-500/30 text-yellow-400" :
             "bg-blue-500/10 border border-blue-500/30 text-blue-400"
           }`}>{status}</div>
         )}
@@ -256,7 +284,7 @@ export default function DashboardPage() {
               </h3>
               <button onClick={() => setShowEvents(false)} className="text-gray-500 hover:text-white"><X size={16} /></button>
             </div>
-            <div className="space-y-2 max-h-80 overflow-y-auto">
+            <div className="space-y-2 max-h-96 overflow-y-auto">
               {events.map((e: any, i: number) => (
                 <div key={i} className={`flex items-start gap-2 p-2 sm:p-3 rounded-lg border ${
                   e.severity === "critical" ? "bg-red-500/10 border-red-500/20" :
@@ -268,6 +296,15 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] sm:text-xs font-medium text-gray-300">{e.type.replace(/_/g, " ").toUpperCase()}</p>
                     <p className="text-xs sm:text-sm text-white mt-0.5">{e.message}</p>
+                    {e.data && Object.keys(e.data).length > 0 && (
+                      <div className="flex flex-wrap gap-1 sm:gap-2 mt-2">
+                        {Object.entries(e.data).slice(0, 6).map(([k, v]) => (
+                          <span key={k} className="text-[10px] sm:text-xs bg-black/30 px-1.5 sm:px-2 py-0.5 rounded text-gray-400 truncate max-w-full">
+                            {k}: <span className="text-white">{String(v).substring(0, 40)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -279,17 +316,13 @@ export default function DashboardPage() {
           <StatCard title="Total Views" value={data?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" format="number" />
           <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" />
           <StatCard title="Total Likes" value={data?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" format="number" />
-          {data?.stats?.avgCTR !== null && data?.stats?.avgCTR !== undefined ? (
-            <StatCard title="Avg CTR" value={parseFloat(data.stats.avgCTR.toFixed(2))} icon={<TrendingUp size={16} />} color={data.stats.avgCTR >= 5 ? "green" : "yellow"} format="percent" subtitle={`✓ REAL (${data.stats.ctrVidsCount} vids)`} />
-          ) : (
-            <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="purple" format="percent" subtitle="real calc" />
-          )}
+          <StatCard title="Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" />
           {data?.stats?.avgRetention !== null && data?.stats?.avgRetention !== undefined ? (
             <StatCard title="Avg Retention" value={parseFloat(data.stats.avgRetention.toFixed(1))} icon={<Clock size={16} />} color={data.stats.avgRetention >= 35 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
           ) : (
-            <StatCard title="Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" />
+            <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="yellow" format="percent" subtitle="real calc" />
           )}
-          <StatCard title={hasRealData ? "Watch Hrs" : "Engagement"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={hasRealData ? <Clock size={16} /> : <TrendingUp size={16} />} color="cyan" format={hasRealData ? "number" : "percent"} subtitle={hasRealData ? "✓ REAL" : "rate"} />
+          <StatCard title={hasRealData ? "Watch Hrs" : "Shares"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : (data?.stats?.totalShares || 0)} icon={hasRealData ? <Clock size={16} /> : <Share2 size={16} />} color="cyan" format="number" subtitle={hasRealData ? "✓ REAL" : "shares"} />
         </div>
 
         {topVideo && worstVideo && (
@@ -331,16 +364,16 @@ function BestWorstCard({ video, type, expanded, setExpanded, analysis, analyzing
       <div className="p-3 sm:p-4">
         <div className="flex items-center gap-2 mb-2 sm:mb-3">
           {isBest ? <Trophy size={16} className="text-yellow-400" /> : <AlertTriangle size={16} className="text-red-400" />}
-          <span className={`text-xs sm:text-sm font-medium ${isBest ? "text-green-400" : "text-red-400"}`}>{isBest ? "BEST" : "WORST"} Performing</span>
+          <span className={`text-xs sm:text-sm font-medium ${isBest ? "text-green-400" : "text-red-400"}`}>{isBest ? "BEST" : "WORST (with views)"} Performing</span>
           {video.has_real_analytics && <span className="text-[10px] bg-green-500/10 text-green-400 px-1.5 py-0.5 rounded">REAL</span>}
         </div>
         <p className="text-white font-medium text-xs sm:text-sm mb-2 line-clamp-2">{video.title}</p>
         <div className="flex gap-2 text-[10px] sm:text-xs text-gray-400 flex-wrap">
           <span>Views: {formatNumber(video.views)}</span>
-          {video.ctr !== null && video.ctr !== undefined && <span className="text-cyan-400">CTR: {video.ctr.toFixed(2)}%</span>}
           {video.avg_view_percentage !== null && video.avg_view_percentage !== undefined && <span className="text-cyan-400">Ret: {video.avg_view_percentage.toFixed(1)}%</span>}
           <span>Eng: {engRate.toFixed(2)}%</span>
           <span>Likes: {formatNumber(video.likes)}</span>
+          {video.watch_time_minutes != null && <span className="text-cyan-400">Watch: {Math.round(video.watch_time_minutes)}m</span>}
           <span className={`${isBest ? "text-green-400" : "text-red-400"} font-bold`}>Score: {video.score}/100</span>
         </div>
         <button onClick={() => onAnalyze(video.youtube_id)} disabled={analyzing} className={`mt-3 text-xs ${isBest ? "text-green-400 hover:text-green-300" : "text-red-400 hover:text-red-300"} flex items-center gap-1 disabled:opacity-50`}>
