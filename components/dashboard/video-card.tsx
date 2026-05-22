@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { formatNumber, formatDuration, getCTRRating, getRetentionRating, calculatePerformanceScore } from "@/lib/utils";
-import { Eye, ThumbsUp, MessageSquare, Clock, Brain, ChevronDown, ChevronUp, AlertTriangle, CheckCircle } from "lucide-react";
+import { formatNumber, formatDuration, getCTRRating, getRetentionRating, getEngagementRating, getViewsPerDayRating } from "@/lib/utils";
+import { Eye, ThumbsUp, MessageSquare, Clock, Brain, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, Lock } from "lucide-react";
 
 interface Props {
   video: any;
@@ -14,16 +14,23 @@ interface Props {
 export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props) {
   const [expanded, setExpanded] = useState(false);
 
-  const score = calculatePerformanceScore({
-    ctr: video.ctr || 0,
-    avg_view_percentage: video.avg_view_percentage || 0,
-    likes: video.likes || 0,
-    views: video.views || 0,
-    comments: video.comments || 0,
-  });
+  const views = video.views || 0;
+  const likes = video.likes || 0;
+  const comments = video.comments || 0;
+  const score = video.score || 0;
+  const hasRealAnalytics = video.has_real_analytics === true;
+  const ctr = video.ctr; // null when no OAuth
+  const retention = video.avg_view_percentage; // null when no OAuth
 
-  const ctrRating = getCTRRating(video.ctr || 0);
-  const retentionRating = getRetentionRating(video.avg_view_percentage || 0);
+  // Real calculated metrics (always available)
+  const engRate = views > 0 ? ((likes + comments) / views) * 100 : 0;
+  const daysSince = video.published_at
+    ? Math.max(1, (Date.now() - new Date(video.published_at).getTime()) / 86400000)
+    : 1;
+  const viewsPerDay = views / daysSince;
+
+  const engRating = getEngagementRating(engRate);
+  const vpdRating = getViewsPerDayRating(viewsPerDay);
 
   const scoreColor = score >= 70 ? "text-green-400 bg-green-500/10 border-green-500/30"
                    : score >= 50 ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
@@ -59,18 +66,33 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
             <span className={"text-[10px] sm:text-xs font-bold px-1.5 sm:px-2 py-0.5 rounded border " + scoreColor}>
               {score}/100
             </span>
-            <span className="text-[10px] sm:text-xs text-gray-400">CTR <span className={ctrRating.color}>{video.ctr || 0}%</span></span>
-            <span className="text-[10px] sm:text-xs text-gray-400">Ret <span className={retentionRating.color}>{video.avg_view_percentage || 0}%</span></span>
+            <span className="text-[10px] sm:text-xs text-gray-400">
+              Eng <span className={engRating.color}>{engRate.toFixed(2)}%</span>
+            </span>
+            <span className="text-[10px] sm:text-xs text-gray-400">
+              {Math.round(viewsPerDay)}/day
+            </span>
+            {hasRealAnalytics && (
+              <span className="text-[9px] sm:text-[10px] bg-green-500/10 text-green-400 px-1 py-0.5 rounded border border-green-500/20">REAL DATA</span>
+            )}
           </div>
         </div>
       </div>
 
+      {/* Stats Grid - 4 columns of REAL data */}
       <div className="grid grid-cols-4 gap-0 border-t border-white/5">
         {[
-          { label: "Views", value: formatNumber(video.views || 0), icon: <Eye size={10} />, color: "text-blue-400" },
-          { label: "Likes", value: formatNumber(video.likes || 0), icon: <ThumbsUp size={10} />, color: "text-green-400" },
-          { label: "Comments", value: formatNumber(video.comments || 0), icon: <MessageSquare size={10} />, color: "text-purple-400" },
-          { label: "Avg View", value: formatDuration(video.avg_view_duration_seconds || 0), icon: <Clock size={10} />, color: "text-yellow-400" },
+          { label: "Views", value: formatNumber(views), icon: <Eye size={10} />, color: "text-blue-400" },
+          { label: "Likes", value: formatNumber(likes), icon: <ThumbsUp size={10} />, color: "text-green-400" },
+          { label: "Comments", value: formatNumber(comments), icon: <MessageSquare size={10} />, color: "text-purple-400" },
+          {
+            label: "Watch Time",
+            value: hasRealAnalytics && video.watch_time_minutes
+              ? Math.round(video.watch_time_minutes) + "m"
+              : Math.round(viewsPerDay) + "/d",
+            icon: <Clock size={10} />,
+            color: "text-yellow-400"
+          },
         ].map(m => (
           <div key={m.label} className="flex flex-col items-center py-2 sm:py-3 border-r border-white/5 last:border-r-0">
             <div className={"flex items-center gap-1 " + m.color + " mb-0.5 sm:mb-1"}>
@@ -82,33 +104,56 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
         ))}
       </div>
 
+      {/* Performance bars - CONDITIONALLY show CTR/Retention only if REAL data exists */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 p-3 sm:p-4 border-t border-white/5">
-        <div className="bg-black/20 rounded-lg p-2 sm:p-3">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] sm:text-xs text-gray-400">CTR</span>
-            <span className={"text-[10px] sm:text-xs font-bold " + ctrRating.color}>{ctrRating.label}</span>
+        {/* CTR Section - Real or Locked */}
+        {hasRealAnalytics && ctr !== null && ctr !== undefined ? (
+          <PerformanceBar
+            label="CTR"
+            badge="✓ REAL"
+            rating={getCTRRating(ctr)}
+            value={ctr}
+            max={10}
+            colorThresholds={{ good: 7, ok: 4 }}
+            displayValue={ctr.toFixed(2) + "%"}
+          />
+        ) : (
+          <div className="bg-black/20 rounded-lg p-2 sm:p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] sm:text-xs text-gray-400 flex items-center gap-1">
+                <Lock size={9} /> CTR
+              </span>
+              <span className="text-[10px] sm:text-xs font-bold text-gray-600">Locked</span>
+            </div>
+            <div className="w-full bg-white/5 rounded-full h-1.5">
+              <div className="h-1.5 rounded-full bg-gray-700" style={{ width: "100%" }} />
+            </div>
+            <p className="text-[10px] sm:text-xs text-gray-600 mt-1 truncate">Connect YouTube to unlock</p>
           </div>
-          <div className="w-full bg-white/10 rounded-full h-1.5">
-            <div className={"h-1.5 rounded-full " + (
-              (video.ctr || 0) >= 7 ? "bg-green-500" : (video.ctr || 0) >= 4 ? "bg-yellow-500" : "bg-red-500"
-            )} style={{ width: Math.min(((video.ctr || 0) / 10) * 100, 100) + "%" }} />
-          </div>
-          <p className="text-[10px] sm:text-xs text-gray-500 mt-1 truncate">{ctrRating.description}</p>
-        </div>
+        )}
 
-        <div className="bg-black/20 rounded-lg p-2 sm:p-3">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] sm:text-xs text-gray-400">Retention</span>
-            <span className={"text-[10px] sm:text-xs font-bold " + retentionRating.color}>{retentionRating.label}</span>
-          </div>
-          <div className="w-full bg-white/10 rounded-full h-1.5">
-            <div className={"h-1.5 rounded-full " + (
-              (video.avg_view_percentage || 0) >= 40 ? "bg-green-500" :
-              (video.avg_view_percentage || 0) >= 25 ? "bg-yellow-500" : "bg-red-500"
-            )} style={{ width: Math.min(((video.avg_view_percentage || 0) / 60) * 100, 100) + "%" }} />
-          </div>
-          <p className="text-[10px] sm:text-xs text-gray-500 mt-1 truncate">{retentionRating.description}</p>
-        </div>
+        {/* Retention - Real or Engagement Rate fallback */}
+        {hasRealAnalytics && retention !== null && retention !== undefined ? (
+          <PerformanceBar
+            label="Retention"
+            badge="✓ REAL"
+            rating={getRetentionRating(retention)}
+            value={retention}
+            max={60}
+            colorThresholds={{ good: 40, ok: 25 }}
+            displayValue={retention.toFixed(1) + "%"}
+          />
+        ) : (
+          <PerformanceBar
+            label="Engagement"
+            badge="calc"
+            rating={engRating}
+            value={engRate}
+            max={10}
+            colorThresholds={{ good: 5, ok: 2 }}
+            displayValue={engRate.toFixed(2) + "%"}
+          />
+        )}
       </div>
 
       {analysis && (
@@ -151,6 +196,7 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
                   {analysis.ai.main_reason && <AIBlock c="purple" l="WHY" t={analysis.ai.main_reason} />}
                   {analysis.ai.thumbnail_analysis && <AIBlock c="blue" l="THUMBNAIL" t={analysis.ai.thumbnail_analysis} />}
                   {analysis.ai.title_analysis && <AIBlock c="cyan" l="TITLE" t={analysis.ai.title_analysis} />}
+                  {analysis.ai.engagement_analysis && <AIBlock c="yellow" l="ENGAGEMENT" t={analysis.ai.engagement_analysis} />}
                   {analysis.ai.retention_analysis && <AIBlock c="yellow" l="RETENTION" t={analysis.ai.retention_analysis} />}
                   {analysis.ai.seo_analysis && <AIBlock c="orange" l="SEO" t={analysis.ai.seo_analysis} />}
                   {analysis.ai.improved_title && (
@@ -208,6 +254,28 @@ export function VideoCard({ video, rank, onAnalyze, analysis, analyzing }: Props
           <Eye size={12} /> Watch
         </a>
       </div>
+    </div>
+  );
+}
+
+function PerformanceBar({ label, badge, rating, value, max, colorThresholds, displayValue }: any) {
+  const pct = Math.min((value / max) * 100, 100);
+  const barColor = value >= colorThresholds.good ? "bg-green-500"
+                 : value >= colorThresholds.ok ? "bg-yellow-500"
+                 : "bg-red-500";
+  return (
+    <div className="bg-black/20 rounded-lg p-2 sm:p-3">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] sm:text-xs text-gray-400 flex items-center gap-1">
+          {label}
+          {badge && <span className={`text-[8px] sm:text-[9px] px-1 py-0.5 rounded ${badge === "✓ REAL" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"}`}>{badge}</span>}
+        </span>
+        <span className={"text-[10px] sm:text-xs font-bold " + rating.color}>{displayValue}</span>
+      </div>
+      <div className="w-full bg-white/10 rounded-full h-1.5">
+        <div className={"h-1.5 rounded-full " + barColor} style={{ width: pct + "%" }} />
+      </div>
+      <p className="text-[10px] sm:text-xs text-gray-500 mt-1 truncate">{rating.label} - {rating.description}</p>
     </div>
   );
 }

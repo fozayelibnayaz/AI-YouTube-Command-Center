@@ -36,11 +36,14 @@ export default function DashboardPage() {
       const vid = await vidRes.json();
       const subs = ch.data?.subscribers || 1000;
 
+      // Calculate scores using REAL CTR/Retention if available
       const videos = (vid.data || []).map((v: any) => ({
         ...v, ...(v.analytics || {}),
         score: calculatePerformanceScore({
           views: v.views || 0, likes: v.likes || 0, comments: v.comments || 0,
           publishedAt: v.published_at, channelSubscribers: subs,
+          ctr: v.analytics?.ctr ?? null,
+          retention: v.analytics?.avg_view_percentage ?? null,
         }),
       })).sort((a: any, b: any) => b.score - a.score);
 
@@ -53,7 +56,6 @@ export default function DashboardPage() {
       const totalWatchTime = videos.reduce((s: number, v: any) => s + (v.watch_time_minutes || 0), 0);
       const avgEng = totalViews > 0 ? ((totalLikes + totalComments) / totalViews) * 100 : 0;
 
-      // Average CTR and retention from videos that have REAL data
       const realVids = videos.filter((v: any) => v.ctr !== null && v.ctr !== undefined);
       const avgCTR = realVids.length > 0 ? realVids.reduce((s: number, v: any) => s + (v.ctr || 0), 0) / realVids.length : null;
       const avgRetention = realVids.length > 0
@@ -133,10 +135,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData();
-    // Check for OAuth success/error in URL
     const params = new URLSearchParams(window.location.search);
     if (params.get("oauth_success")) {
-      setStatus("✅ YouTube connected! Refresh to see real CTR/retention data.");
+      setStatus("✅ YouTube connected! Refresh to see real CTR/retention.");
       window.history.replaceState({}, "", "/dashboard");
     }
     if (params.get("oauth_error")) {
@@ -186,8 +187,7 @@ export default function DashboardPage() {
               {eventsLoading ? "..." : "Preview Events"}
             </button>
             <button onClick={sendSmartAlerts} disabled={eventsLoading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm disabled:opacity-50">
-              <Send size={14} />
-              Send Alerts
+              <Send size={14} /> Send Alerts
             </button>
             <button onClick={sendTelegramTest} disabled={syncing} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs sm:text-sm disabled:opacity-50">
               <Bell size={14} /> Test
@@ -233,7 +233,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Stats - mixes REAL and calculated metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
           <StatCard title="Total Views" value={data?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" format="number" />
           <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" />
@@ -241,14 +240,14 @@ export default function DashboardPage() {
           {data?.stats?.avgCTR !== null && data?.stats?.avgCTR !== undefined ? (
             <StatCard title="Avg CTR" value={parseFloat(data.stats.avgCTR.toFixed(2))} icon={<TrendingUp size={16} />} color={data.stats.avgCTR >= 5 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
           ) : (
-            <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="purple" format="percent" subtitle="Calculated" />
+            <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="purple" format="percent" subtitle="real calc" />
           )}
           {data?.stats?.avgRetention !== null && data?.stats?.avgRetention !== undefined ? (
             <StatCard title="Avg Retention" value={parseFloat(data.stats.avgRetention.toFixed(1))} icon={<Clock size={16} />} color={data.stats.avgRetention >= 35 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
           ) : (
             <StatCard title="Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" />
           )}
-          <StatCard title={hasRealData ? "Watch Time" : "Engagement"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={hasRealData ? <Clock size={16} /> : <TrendingUp size={16} />} color="cyan" format={hasRealData ? "number" : "percent"} subtitle={hasRealData ? "hours ✓ REAL" : "rate"} />
+          <StatCard title={hasRealData ? "Watch Hrs" : "Engagement"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={hasRealData ? <Clock size={16} /> : <TrendingUp size={16} />} color="cyan" format={hasRealData ? "number" : "percent"} subtitle={hasRealData ? "✓ REAL" : "rate"} />
         </div>
 
         {topVideo && worstVideo && (
@@ -284,31 +283,32 @@ export default function DashboardPage() {
 
 function BestWorstCard({ video, type, expanded, setExpanded, analysis, analyzing, onAnalyze }: any) {
   const isBest = type === "best";
-  const color = isBest ? "green" : "red";
+  const engRate = video.views > 0 ? ((video.likes + video.comments) / video.views) * 100 : 0;
   return (
-    <div className={`rounded-xl border border-${color}-500/20 bg-${color}-500/5`}>
+    <div className={`rounded-xl border ${isBest ? "border-green-500/20 bg-green-500/5" : "border-red-500/20 bg-red-500/5"}`}>
       <div className="p-3 sm:p-4">
         <div className="flex items-center gap-2 mb-2 sm:mb-3">
-          {isBest ? <Trophy size={16} className="text-yellow-400" /> : <AlertTriangle size={16} className={`text-${color}-400`} />}
-          <span className={`text-xs sm:text-sm font-medium text-${color}-400`}>{isBest ? "BEST" : "WORST"} Performing</span>
+          {isBest ? <Trophy size={16} className="text-yellow-400" /> : <AlertTriangle size={16} className="text-red-400" />}
+          <span className={`text-xs sm:text-sm font-medium ${isBest ? "text-green-400" : "text-red-400"}`}>{isBest ? "BEST" : "WORST"} Performing</span>
           {video.has_real_analytics && <span className="text-[10px] bg-green-500/10 text-green-400 px-1.5 py-0.5 rounded">REAL</span>}
         </div>
         <p className="text-white font-medium text-xs sm:text-sm mb-2 line-clamp-2">{video.title}</p>
         <div className="flex gap-2 text-[10px] sm:text-xs text-gray-400 flex-wrap">
           <span>Views: {formatNumber(video.views)}</span>
-          {video.ctr !== null && video.ctr !== undefined && <span className="text-cyan-400">CTR: {video.ctr}%</span>}
-          {video.avg_view_percentage !== null && video.avg_view_percentage !== undefined && <span className="text-cyan-400">Ret: {video.avg_view_percentage}%</span>}
+          {video.ctr !== null && video.ctr !== undefined && <span className="text-cyan-400">CTR: {video.ctr.toFixed(2)}%</span>}
+          {video.avg_view_percentage !== null && video.avg_view_percentage !== undefined && <span className="text-cyan-400">Ret: {video.avg_view_percentage.toFixed(1)}%</span>}
+          <span>Eng: {engRate.toFixed(2)}%</span>
           <span>Likes: {formatNumber(video.likes)}</span>
-          <span className={`text-${color}-400 font-bold`}>Score: {video.score}/100</span>
+          <span className={`${isBest ? "text-green-400" : "text-red-400"} font-bold`}>Score: {video.score}/100</span>
         </div>
-        <button onClick={() => onAnalyze(video.youtube_id)} disabled={analyzing} className={`mt-3 text-xs text-${color}-400 hover:text-${color}-300 flex items-center gap-1 disabled:opacity-50`}>
+        <button onClick={() => onAnalyze(video.youtube_id)} disabled={analyzing} className={`mt-3 text-xs ${isBest ? "text-green-400 hover:text-green-300" : "text-red-400 hover:text-red-300"} flex items-center gap-1 disabled:opacity-50`}>
           <Brain size={12} />
           {analyzing ? "Analyzing..." : analysis ? "Re-analyze" : isBest ? "Why did this work?" : "Why did this fail?"}
         </button>
       </div>
       {analysis && (
-        <div className={`border-t border-${color}-500/20`}>
-          <button onClick={() => setExpanded(!expanded)} className={`flex items-center gap-2 text-xs sm:text-sm text-${color}-400 w-full text-left px-3 sm:px-4 py-3`}>
+        <div className={`border-t ${isBest ? "border-green-500/20" : "border-red-500/20"}`}>
+          <button onClick={() => setExpanded(!expanded)} className={`flex items-center gap-2 text-xs sm:text-sm ${isBest ? "text-green-400" : "text-red-400"} w-full text-left px-3 sm:px-4 py-3`}>
             {isBest ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
             <span className="font-medium">AI Analysis {expanded ? "▲" : "▼"}</span>
           </button>
@@ -341,6 +341,7 @@ function AnalysisPanel({ analysis }: { analysis: any }) {
         {analysis.ai.thumbnail_analysis && <B c="blue" l="THUMBNAIL" t={analysis.ai.thumbnail_analysis} />}
         {analysis.ai.title_analysis && <B c="cyan" l="TITLE" t={analysis.ai.title_analysis} />}
         {analysis.ai.engagement_analysis && <B c="yellow" l="ENGAGEMENT" t={analysis.ai.engagement_analysis} />}
+        {analysis.ai.retention_analysis && <B c="yellow" l="RETENTION" t={analysis.ai.retention_analysis} />}
         {analysis.ai.seo_analysis && <B c="orange" l="SEO" t={analysis.ai.seo_analysis} />}
         {analysis.ai.improved_title && <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2 sm:p-3"><p className="text-xs font-medium text-green-400 mb-1">BETTER TITLE</p><p className="text-xs sm:text-sm text-white font-medium">{analysis.ai.improved_title}</p></div>}
         {analysis.ai.next_video_advice && <B c="pink" l="NEXT VIDEO" t={analysis.ai.next_video_advice} />}

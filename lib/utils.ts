@@ -21,53 +21,112 @@ export function formatDuration(seconds: number): string {
   return m + ":" + String(s).padStart(2, "0");
 }
 
-// Engagement rate ratings (based on REAL likes+comments/views)
 export function getEngagementRating(rate: number) {
   if (rate >= 8) return { label: "Excellent", color: "text-green-400", description: "Top 5% of creators" };
   if (rate >= 5) return { label: "Very Good", color: "text-blue-400", description: "Strong engagement" };
   if (rate >= 3) return { label: "Good", color: "text-cyan-400", description: "Above average" };
   if (rate >= 1.5) return { label: "Average", color: "text-yellow-400", description: "Industry average" };
   if (rate >= 0.5) return { label: "Below Avg", color: "text-orange-400", description: "Needs improvement" };
-  return { label: "Low", color: "text-red-400", description: "Audience not engaging" };
+  if (rate > 0) return { label: "Low", color: "text-red-400", description: "Audience not engaging" };
+  return { label: "No data", color: "text-gray-500", description: "Need views to measure" };
 }
 
-// Views-per-day rating (based on REAL views and age)
 export function getViewsPerDayRating(viewsPerDay: number) {
-  if (viewsPerDay >= 1000) return { label: "Viral", color: "text-green-400" };
-  if (viewsPerDay >= 100) return { label: "Strong", color: "text-blue-400" };
-  if (viewsPerDay >= 20) return { label: "Steady", color: "text-cyan-400" };
-  if (viewsPerDay >= 5) return { label: "Slow", color: "text-yellow-400" };
-  if (viewsPerDay >= 1) return { label: "Stagnant", color: "text-orange-400" };
-  return { label: "Dead", color: "text-red-400" };
+  if (viewsPerDay >= 1000) return { label: "Viral", color: "text-green-400", description: "1000+ views/day" };
+  if (viewsPerDay >= 100) return { label: "Strong", color: "text-blue-400", description: "100+ views/day" };
+  if (viewsPerDay >= 20) return { label: "Steady", color: "text-cyan-400", description: "20+ views/day" };
+  if (viewsPerDay >= 5) return { label: "Slow", color: "text-yellow-400", description: "5+ views/day" };
+  if (viewsPerDay >= 1) return { label: "Stagnant", color: "text-orange-400", description: "1+ views/day" };
+  return { label: "Dead", color: "text-red-400", description: "Less than 1 view/day" };
 }
 
-// Calculate score based on REAL metrics only
-// - Views per day (lifetime velocity): 40 points
-// - Engagement rate (likes+comments/views): 40 points
-// - Total views relative to channel size: 20 points
+/**
+ * Calculate performance score from REAL data.
+ * Uses CTR + Retention if available (from OAuth), otherwise engagement-based.
+ *
+ * Real OAuth data scoring (100 points):
+ *   - CTR: 35 points
+ *   - Retention: 35 points
+ *   - Engagement rate: 20 points
+ *   - Views per day velocity: 10 points
+ *
+ * No OAuth scoring (100 points):
+ *   - Views per day velocity: 40 points
+ *   - Engagement rate: 40 points
+ *   - Reach (views vs subs): 20 points
+ *
+ * Returns null if insufficient data (e.g., 0 views)
+ */
 export function calculatePerformanceScore(a: {
   views: number;
   likes: number;
   comments: number;
   publishedAt?: string;
   channelSubscribers?: number;
+  ctr?: number | null;
+  retention?: number | null;
 }): number {
   const views = a.views || 0;
   const likes = a.likes || 0;
   const comments = a.comments || 0;
   const subs = a.channelSubscribers || 1000;
+  const ctr = a.ctr;
+  const retention = a.retention;
 
-  // Days since publish
+  // No data = no score
+  if (views === 0) return 0;
+
   let daysSince = 1;
   if (a.publishedAt) {
     daysSince = Math.max(1, (Date.now() - new Date(a.publishedAt).getTime()) / 86400000);
   }
-
   const viewsPerDay = views / daysSince;
-  const engagementRate = views > 0 ? ((likes + comments) / views) * 100 : 0;
+  const engagementRate = ((likes + comments) / views) * 100;
   const viewsVsSubs = (views / Math.max(subs, 1)) * 100;
 
-  // Views per day score (logarithmic - rewards velocity)
+  // ═══════════════════════════════════════════════════════════
+  // PATH A: We have REAL CTR + Retention from OAuth
+  // ═══════════════════════════════════════════════════════════
+  if (ctr !== null && ctr !== undefined && retention !== null && retention !== undefined) {
+    // CTR score (35 points max)
+    let ctrScore = 0;
+    if (ctr >= 10) ctrScore = 35;
+    else if (ctr >= 7) ctrScore = 28 + ((ctr - 7) / 3) * 7;
+    else if (ctr >= 4) ctrScore = 18 + ((ctr - 4) / 3) * 10;
+    else if (ctr >= 2) ctrScore = 8 + ((ctr - 2) / 2) * 10;
+    else ctrScore = (ctr / 2) * 8;
+
+    // Retention score (35 points max)
+    let retScore = 0;
+    if (retention >= 50) retScore = 35;
+    else if (retention >= 40) retScore = 28 + ((retention - 40) / 10) * 7;
+    else if (retention >= 30) retScore = 18 + ((retention - 30) / 10) * 10;
+    else if (retention >= 20) retScore = 8 + ((retention - 20) / 10) * 10;
+    else retScore = (retention / 20) * 8;
+
+    // Engagement score (20 points max)
+    let engScore = 0;
+    if (engagementRate >= 8) engScore = 20;
+    else if (engagementRate >= 5) engScore = 15 + ((engagementRate - 5) / 3) * 5;
+    else if (engagementRate >= 2) engScore = 8 + ((engagementRate - 2) / 3) * 7;
+    else if (engagementRate >= 0.5) engScore = 3 + ((engagementRate - 0.5) / 1.5) * 5;
+    else engScore = (engagementRate / 0.5) * 3;
+
+    // Velocity score (10 points max)
+    let vpdScore = 0;
+    if (viewsPerDay >= 1000) vpdScore = 10;
+    else if (viewsPerDay >= 100) vpdScore = 7 + ((viewsPerDay - 100) / 900) * 3;
+    else if (viewsPerDay >= 10) vpdScore = 3 + ((viewsPerDay - 10) / 90) * 4;
+    else vpdScore = (viewsPerDay / 10) * 3;
+
+    return Math.round(ctrScore + retScore + engScore + vpdScore);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PATH B: No OAuth - use real engagement + velocity + reach
+  // ═══════════════════════════════════════════════════════════
+
+  // Views per day (40 max)
   let vpdScore = 0;
   if (viewsPerDay >= 1000) vpdScore = 40;
   else if (viewsPerDay >= 100) vpdScore = 30 + ((viewsPerDay - 100) / 900) * 10;
@@ -76,7 +135,7 @@ export function calculatePerformanceScore(a: {
   else if (viewsPerDay >= 1) vpdScore = 5 + ((viewsPerDay - 1) / 4) * 5;
   else vpdScore = viewsPerDay * 5;
 
-  // Engagement score
+  // Engagement (40 max)
   let engScore = 0;
   if (engagementRate >= 8) engScore = 40;
   else if (engagementRate >= 5) engScore = 30 + ((engagementRate - 5) / 3) * 10;
@@ -85,7 +144,7 @@ export function calculatePerformanceScore(a: {
   else if (engagementRate >= 0.5) engScore = 5 + ((engagementRate - 0.5) / 1) * 5;
   else engScore = engagementRate * 10;
 
-  // Views vs subscribers (how well it reaches/exceeds subscriber base)
+  // Reach (20 max)
   let reachScore = 0;
   if (viewsVsSubs >= 100) reachScore = 20;
   else if (viewsVsSubs >= 50) reachScore = 15 + ((viewsVsSubs - 50) / 50) * 5;
@@ -96,13 +155,14 @@ export function calculatePerformanceScore(a: {
   return Math.round(vpdScore + engScore + reachScore);
 }
 
-// Diagnose video using REAL metrics
 export function diagnoseVideo(a: {
   views: number;
   likes: number;
   comments: number;
   publishedAt?: string;
   channelSubscribers?: number;
+  ctr?: number | null;
+  retention?: number | null;
 }): Array<{ issue: string; severity: "critical"|"warning"|"minor"; fix: string }> {
   const issues = [];
   const views = a.views || 0;
@@ -110,14 +170,57 @@ export function diagnoseVideo(a: {
   const comments = a.comments || 0;
   const subs = a.channelSubscribers || 1000;
 
+  if (views === 0) {
+    return [{
+      issue: "Video has 0 views - never reached anyone",
+      severity: "critical",
+      fix: "Check if video is public/unlisted. Promote on social media. Update thumbnail/title to attract clicks.",
+    }];
+  }
+
   let daysSince = 1;
   if (a.publishedAt) {
     daysSince = Math.max(1, (Date.now() - new Date(a.publishedAt).getTime()) / 86400000);
   }
   const viewsPerDay = views / daysSince;
-  const engagementRate = views > 0 ? ((likes + comments) / views) * 100 : 0;
+  const engagementRate = ((likes + comments) / views) * 100;
   const viewsVsSubs = (views / Math.max(subs, 1)) * 100;
 
+  // REAL CTR-based issues (only when OAuth available)
+  if (a.ctr !== null && a.ctr !== undefined) {
+    if (a.ctr < 2) {
+      issues.push({
+        issue: "REAL CTR critically low: " + a.ctr.toFixed(2) + "% (target: >4%)",
+        severity: "critical" as const,
+        fix: "Thumbnail is failing. " + (100 - a.ctr).toFixed(1) + "% of people who saw the impression didn't click. Redesign with brighter colors, clearer face, larger text.",
+      });
+    } else if (a.ctr < 4) {
+      issues.push({
+        issue: "REAL CTR below average: " + a.ctr.toFixed(2) + "%",
+        severity: "warning" as const,
+        fix: "A/B test new thumbnails. Try more curiosity-gap titles. Industry good: 5-8%.",
+      });
+    }
+  }
+
+  // REAL Retention-based issues (only when OAuth available)
+  if (a.retention !== null && a.retention !== undefined) {
+    if (a.retention < 20) {
+      issues.push({
+        issue: "REAL retention critically low: " + a.retention.toFixed(1) + "%",
+        severity: "critical" as const,
+        fix: (100 - a.retention).toFixed(1) + "% of viewers leave before video ends. Hook is broken - re-edit first 30 seconds with stronger opening.",
+      });
+    } else if (a.retention < 30) {
+      issues.push({
+        issue: "REAL retention below average: " + a.retention.toFixed(1) + "%",
+        severity: "warning" as const,
+        fix: "Pacing too slow. Cut unnecessary intro. Add pattern interrupts every 60-90 seconds.",
+      });
+    }
+  }
+
+  // Velocity-based issues
   if (daysSince > 30 && viewsPerDay < 1) {
     issues.push({
       issue: "Video gets less than 1 view per day after " + Math.floor(daysSince) + " days",
@@ -128,39 +231,35 @@ export function diagnoseVideo(a: {
     issues.push({
       issue: "Low velocity: only " + viewsPerDay.toFixed(1) + " views/day",
       severity: "warning" as const,
-      fix: "Algorithm stopped pushing this video. Try updating thumbnail or sharing on social media.",
+      fix: "Algorithm stopped pushing. Try updating thumbnail or sharing on social media.",
     });
   }
 
+  // Engagement issues
   if (engagementRate < 1 && views >= 100) {
     issues.push({
       issue: "Low engagement rate: " + engagementRate.toFixed(2) + "% (target: >2%)",
       severity: "warning" as const,
-      fix: "Audience watches but doesn't engage. Add stronger CTAs - ask viewers to like and comment in first 30 seconds.",
-    });
-  } else if (engagementRate < 0.3 && views >= 500) {
-    issues.push({
-      issue: "Critically low engagement: " + engagementRate.toFixed(2) + "%",
-      severity: "critical" as const,
-      fix: "Content isn't resonating. Consider that viewers may be skipping past it without engaging.",
+      fix: "Add stronger CTAs - ask viewers to like and comment in first 30 seconds.",
     });
   }
 
+  // Reach issues
   if (viewsVsSubs < 5 && subs > 100 && daysSince > 7) {
     issues.push({
       issue: "Only " + viewsVsSubs.toFixed(1) + "% of subscribers watched (target: >20%)",
       severity: "warning" as const,
-      fix: "Your own subscribers aren't watching. Thumbnail/title may not appeal to your existing audience.",
+      fix: "Your own subscribers aren't watching. Thumbnail/title may not appeal to existing audience.",
     });
   }
 
   return issues;
 }
 
-// Legacy compatibility (returns honest "N/A" labels)
+// Legacy CTR/Retention ratings (use only if real value provided)
 export function getCTRRating(ctr: number | null) {
   if (ctr === null || ctr === undefined) {
-    return { label: "N/A", color: "text-gray-500", description: "Requires YouTube Analytics API (OAuth)" };
+    return { label: "N/A", color: "text-gray-500", description: "Requires YouTube Analytics OAuth" };
   }
   if (ctr >= 10) return { label: "Excellent", color: "text-green-400", description: "Top 5% of channels" };
   if (ctr >= 7) return { label: "Good", color: "text-blue-400", description: "Above average" };
@@ -171,7 +270,7 @@ export function getCTRRating(ctr: number | null) {
 
 export function getRetentionRating(pct: number | null) {
   if (pct === null || pct === undefined) {
-    return { label: "N/A", color: "text-gray-500", description: "Requires YouTube Analytics API (OAuth)" };
+    return { label: "N/A", color: "text-gray-500", description: "Requires YouTube Analytics OAuth" };
   }
   if (pct >= 50) return { label: "Excellent", color: "text-green-400", description: "Top creator level" };
   if (pct >= 40) return { label: "Good", color: "text-blue-400", description: "Above average" };
