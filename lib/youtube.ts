@@ -30,10 +30,12 @@ const DEMO_CHANNEL = {
   videoCount: 87,
 };
 
-// Get the channel ID to use: OAuth-selected channel OR env default
+// Priority: User-selected channel from Supabase > env default
 async function getActiveChannelId(): Promise<string> {
-  const stored = await getStoredChannelId();
-  if (stored && stored.length > 5) return stored;
+  try {
+    const stored = await getStoredChannelId();
+    if (stored && stored.length > 5 && stored.startsWith("UC")) return stored;
+  } catch {}
   return DEFAULT_CHANNEL_ID;
 }
 
@@ -139,10 +141,10 @@ export async function getChannelVideos(max = 500) {
       }
     }
 
-    // Enrich with REAL CTR/Retention if OAuth connected
-    const token = await getValidAccessToken();
-    if (token) {
-      try {
+    // Try to enrich with REAL Analytics if OAuth available (won't break if it fails)
+    try {
+      const token = await getValidAccessToken();
+      if (token) {
         const realAnalytics = await getBatchVideoAnalytics(allVideoIds, 90);
         for (const v of allVideos) {
           const real = realAnalytics[v.youtube_id];
@@ -151,21 +153,18 @@ export async function getChannelVideos(max = 500) {
               ...v.analytics,
               ctr: real.ctr,
               impressions: real.impressions,
-              avg_view_percentage: real.averageViewPercentage
-                ? parseFloat(real.averageViewPercentage.toFixed(2))
-                : null,
+              avg_view_percentage: real.averageViewPercentage ? parseFloat(real.averageViewPercentage.toFixed(2)) : null,
               avg_view_duration_seconds: real.averageViewDuration || null,
               watch_time_minutes: real.estimatedMinutesWatched || null,
               shares: real.shares || 0,
               subscribers_gained: real.subscribersGained || 0,
-              analytics_period: "Last 90 days",
             };
             v.has_real_analytics = true;
           }
         }
-      } catch (e) {
-        console.error("Failed to enrich with Analytics API:", e);
       }
+    } catch (e) {
+      console.log("Analytics enrichment skipped:", e);
     }
 
     return allVideos;

@@ -1,54 +1,89 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Tv, CheckCircle, Loader2, Users, Eye, Video, Link2, AlertCircle, Plus, Info } from "lucide-react";
+import { Tv, CheckCircle, Loader2, Users, Eye, Video, Link2, AlertCircle, Plus, ArrowRight } from "lucide-react";
 
 export default function SelectChannelPage() {
   const router = useRouter();
-  const [channels, setChannels] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selecting, setSelecting] = useState<string | null>(null);
+  const [oauthChannels, setOauthChannels] = useState<any[]>([]);
+  const [loadingChannels, setLoadingChannels] = useState(true);
   const [currentId, setCurrentId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [notAuthed, setNotAuthed] = useState(false);
-  const [showManualInput, setShowManualInput] = useState(false);
-  const [manualId, setManualId] = useState("");
-  const [manualLoading, setManualLoading] = useState(false);
-  const [manualError, setManualError] = useState("");
-  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [oauthStatus, setOauthStatus] = useState<any>(null);
 
-  async function load() {
-    setLoading(true);
-    setError("");
-    setNotAuthed(false);
+  const [manualId, setManualId] = useState("UCA_NxRFfbYSG3kOeHak0BjQ");
+  const [lookupResult, setLookupResult] = useState<any>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupError, setLookupError] = useState("");
 
+  const [selecting, setSelecting] = useState(false);
+  const [pageError, setPageError] = useState("");
+
+  async function loadStatus() {
     try {
-      const statusRes = await fetch("/api/auth/status");
-      const statusJson = await statusRes.json();
-      if (!statusJson.connected) {
-        setNotAuthed(true);
-        setLoading(false);
-        return;
-      }
-      setCurrentId(statusJson.channelId || null);
-
-      const chRes = await fetch("/api/auth/channels");
-      const chJson = await chRes.json();
-      if (chJson.success) {
-        setChannels(chJson.channels || []);
-        setDebugInfo({ mineCount: chJson.mineCount, managedCount: chJson.managedCount, note: chJson.note });
-      } else {
-        setError(chJson.error || "Failed to load channels");
-      }
+      const res = await fetch("/api/auth/status");
+      const json = await res.json();
+      setOauthStatus(json);
+      setCurrentId(json.channelId || null);
     } catch (e) {
-      setError("Network error: " + String(e));
-    } finally {
-      setLoading(false);
+      setPageError("Could not load status: " + String(e));
     }
   }
 
-  async function selectChannel(channel: any) {
-    setSelecting(channel.id);
+  async function loadChannels() {
+    setLoadingChannels(true);
+    try {
+      const res = await fetch("/api/auth/channels");
+      const text = await res.text();
+      let json: any = {};
+      try { json = JSON.parse(text); }
+      catch {
+        setPageError("Channels endpoint returned non-JSON. Response: " + text.substring(0, 200));
+        setLoadingChannels(false);
+        return;
+      }
+      if (json.success && json.channels) {
+        setOauthChannels(json.channels);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingChannels(false);
+    }
+  }
+
+  async function lookupChannel() {
+    if (!manualId.trim()) return;
+    setLookingUp(true);
+    setLookupError("");
+    setLookupResult(null);
+    try {
+      const res = await fetch("/api/auth/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId: manualId.trim() }),
+      });
+      const text = await res.text();
+      let json: any = {};
+      try { json = JSON.parse(text); }
+      catch {
+        setLookupError("Server error. Response: " + text.substring(0, 200));
+        setLookingUp(false);
+        return;
+      }
+      if (json.success && json.channel) {
+        setLookupResult(json.channel);
+      } else {
+        setLookupError(json.error || "Channel not found");
+      }
+    } catch (e) {
+      setLookupError("Network error: " + String(e));
+    } finally {
+      setLookingUp(false);
+    }
+  }
+
+  async function selectAndGo(channel: any) {
+    setSelecting(true);
     try {
       const res = await fetch("/api/auth/select-channel", {
         method: "POST",
@@ -56,47 +91,22 @@ export default function SelectChannelPage() {
         body: JSON.stringify({ channelId: channel.id, channelTitle: channel.title }),
       });
       const json = await res.json();
-      if (json.success) router.push("/dashboard?channel_changed=1");
-      else { setError("Failed: " + (json.error || "Unknown")); setSelecting(null); }
-    } catch (e) {
-      setError(String(e));
-      setSelecting(null);
-    }
-  }
-
-  async function lookupAndAddChannel() {
-    if (!manualId.trim()) return;
-    setManualLoading(true);
-    setManualError("");
-    try {
-      const res = await fetch("/api/auth/channels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channelId: manualId.trim() }),
-      });
-      const json = await res.json();
-      if (json.success && json.channel) {
-        // Add to list AND auto-select
-        setChannels(prev => {
-          const exists = prev.find(c => c.id === json.channel.id);
-          if (exists) return prev;
-          return [json.channel, ...prev];
-        });
-        setShowManualInput(false);
-        setManualId("");
-        // Auto-select
-        await selectChannel(json.channel);
+      if (json.success) {
+        router.push("/dashboard?channel_changed=1");
       } else {
-        setManualError(json.error || "Channel not found. Check the ID.");
+        setPageError("Could not save selection: " + (json.error || "Unknown"));
+        setSelecting(false);
       }
     } catch (e) {
-      setManualError(String(e));
-    } finally {
-      setManualLoading(false);
+      setPageError(String(e));
+      setSelecting(false);
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    loadStatus();
+    loadChannels();
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-950 p-3 sm:p-4 lg:p-6">
@@ -106,164 +116,141 @@ export default function SelectChannelPage() {
             <Tv className="text-red-400 flex-shrink-0" size={24} />
             Select Your YouTube Channel
           </h1>
-          <p className="text-gray-400 mt-1 text-xs sm:text-sm">Choose which channel to analyze.</p>
+          <p className="text-gray-400 mt-1 text-xs sm:text-sm">
+            Choose which channel to analyze.
+            {oauthStatus?.email && <span className="ml-2 text-green-400">Signed in: {oauthStatus.email}</span>}
+          </p>
         </div>
 
-        {loading && (
-          <div className="text-center py-12">
-            <Loader2 className="animate-spin mx-auto text-blue-400" size={32} />
-            <p className="text-gray-400 mt-3 text-sm">Loading channels...</p>
+        {pageError && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400 mb-4 break-words">
+            ❌ {pageError}
           </div>
         )}
 
-        {notAuthed && !loading && (
-          <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-5 sm:p-6 text-center">
-            <AlertCircle size={32} className="text-blue-400 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-2">Not Connected to YouTube</h3>
-            <a href="/api/auth/login" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">
-              <Link2 size={14} /> Connect YouTube Account
+        {/* ━━━ MAIN ACTION: Enter Channel ID directly ━━━ */}
+        <div className="rounded-xl border border-blue-500/40 bg-blue-500/5 p-4 sm:p-6 mb-4">
+          <h2 className="text-white font-semibold text-base sm:text-lg mb-2 flex items-center gap-2">
+            <Plus className="text-blue-400" size={20} />
+            Add Your Channel by ID
+          </h2>
+          <p className="text-xs sm:text-sm text-gray-400 mb-4">
+            This works for BOTH personal channels AND brand accounts (like Eagle 3D Streaming).
+            <br />
+            Find your channel ID at: <a href="https://www.youtube.com/account_advanced" target="_blank" rel="noopener" className="text-blue-400 underline">youtube.com/account_advanced</a>
+          </p>
+
+          <div className="flex gap-2 flex-wrap mb-3">
+            <input
+              type="text"
+              value={manualId}
+              onChange={e => { setManualId(e.target.value); setLookupResult(null); setLookupError(""); }}
+              placeholder="UCxxxxxxxxxxxxxxxxxx"
+              className="flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500/50 text-sm font-mono"
+              disabled={lookingUp || selecting}
+            />
+            <button
+              onClick={() => { setManualId("UCA_NxRFfbYSG3kOeHak0BjQ"); setLookupResult(null); setLookupError(""); }}
+              className="px-3 py-2.5 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs whitespace-nowrap"
+              type="button"
+              disabled={lookingUp || selecting}
+            >
+              Use Eagle 3D
+            </button>
+            <button
+              onClick={lookupChannel}
+              disabled={lookingUp || selecting || !manualId.trim()}
+              className="px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap"
+            >
+              {lookingUp ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+              {lookingUp ? "Looking up..." : "Look up channel"}
+            </button>
+          </div>
+
+          {lookupError && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded p-3 text-xs text-red-400 mb-3">
+              ❌ {lookupError}
+            </div>
+          )}
+
+          {lookupResult && (
+            <div className="rounded-xl border border-green-500/40 bg-green-500/10 p-3 sm:p-4">
+              <p className="text-xs text-green-400 mb-3 font-medium">✓ Channel Found!</p>
+              <div className="flex items-start gap-3 sm:gap-4">
+                {lookupResult.thumbnail ? (
+                  <img src={lookupResult.thumbnail} alt="" className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex-shrink-0" />
+                ) : (
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-red-600/30 flex items-center justify-center flex-shrink-0">
+                    <Tv size={20} className="text-red-400" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-white font-semibold text-sm sm:text-base truncate">{lookupResult.title}</h3>
+                  <div className="flex items-center gap-2 sm:gap-4 mt-2 text-xs text-gray-400 flex-wrap">
+                    <span className="flex items-center gap-1"><Users size={11} /> {(lookupResult.subscribers || 0).toLocaleString()}</span>
+                    <span className="flex items-center gap-1"><Eye size={11} /> {(lookupResult.totalViews || 0).toLocaleString()}</span>
+                    <span className="flex items-center gap-1"><Video size={11} /> {(lookupResult.videoCount || 0).toLocaleString()}</span>
+                  </div>
+                  <p className="text-[10px] text-gray-600 mt-1 truncate font-mono">ID: {lookupResult.id}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => selectAndGo(lookupResult)}
+                disabled={selecting}
+                className="mt-3 w-full px-4 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                {selecting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                {selecting ? "Saving..." : "Use This Channel →"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ━━━ OAuth-detected channels (optional) ━━━ */}
+        {oauthChannels.length > 0 && !loadingChannels && (
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 mb-4">
+            <h3 className="text-white text-sm font-semibold mb-3">Or pick from OAuth-detected channels:</h3>
+            <div className="space-y-2">
+              {oauthChannels.map(ch => {
+                const isCurrent = currentId === ch.id;
+                return (
+                  <button
+                    key={ch.id}
+                    onClick={() => selectAndGo(ch)}
+                    disabled={selecting}
+                    className={`w-full text-left rounded-lg border p-3 transition-all ${
+                      isCurrent ? "border-green-500/40 bg-green-500/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                    } disabled:opacity-50`}
+                  >
+                    <div className="flex items-start gap-3">
+                      {ch.thumbnail && <img src={ch.thumbnail} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-white text-sm font-medium truncate">{ch.title}</span>
+                          {isCurrent && <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">Active</span>}
+                        </div>
+                        <div className="flex gap-3 text-xs text-gray-500 mt-1">
+                          <span>{(ch.subscribers || 0).toLocaleString()} subs</span>
+                          <span>{(ch.videoCount || 0).toLocaleString()} videos</span>
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* OAuth status info */}
+        {!oauthStatus?.connected && (
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-xs text-yellow-400 mb-4">
+            <p className="font-medium mb-1">⚠️ For REAL CTR/Retention data:</p>
+            <p className="text-gray-400 mb-2">You need to connect your YouTube account via OAuth. Without OAuth, you'll still see views/likes/comments (which are public) but not CTR or retention.</p>
+            <a href="/api/auth/login" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300">
+              <Link2 size={12} /> Connect YouTube OAuth
             </a>
           </div>
-        )}
-
-        {error && !notAuthed && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400 mb-4 break-words">
-            <p className="font-medium mb-1">❌ Error</p>
-            <p className="text-xs">{error}</p>
-            <button onClick={load} className="mt-3 text-xs px-3 py-1.5 rounded-lg border border-red-500/30 hover:bg-red-500/10">Try Again</button>
-          </div>
-        )}
-
-        {!loading && !notAuthed && (
-          <>
-            {/* Brand Account Notice */}
-            {(channels.length === 0 || (channels.length === 1 && channels[0].subscribers === 0)) && (
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4 text-xs sm:text-sm">
-                <p className="text-yellow-400 font-medium mb-2 flex items-center gap-2">
-                  <Info size={14} /> Brand Account Not Auto-Detected
-                </p>
-                <p className="text-gray-400 mb-3">
-                  Google's API only shows your personal channel by default. Brand accounts like "Eagle 3D Streaming" need to be added manually using the channel ID.
-                </p>
-                <p className="text-gray-400 mb-3">
-                  <strong>Add your Eagle 3D Streaming channel:</strong>
-                </p>
-                <button
-                  onClick={() => setShowManualInput(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium"
-                >
-                  <Plus size={14} /> Add Brand Channel by ID
-                </button>
-              </div>
-            )}
-
-            {/* Manual Input */}
-            {showManualInput && (
-              <div className="bg-blue-500/5 border border-blue-500/30 rounded-xl p-4 mb-4">
-                <h3 className="text-white font-semibold mb-2 text-sm">Enter Channel ID</h3>
-                <p className="text-xs text-gray-400 mb-3">
-                  Get your channel ID from: <a href="https://www.youtube.com/account_advanced" target="_blank" className="text-blue-400 underline">YouTube Account Advanced</a>
-                  <br />
-                  Or paste your existing one: <code className="bg-black/30 px-1.5 py-0.5 rounded text-cyan-400">UCA_NxRFfbYSG3kOeHak0BjQ</code> (Eagle 3D Streaming)
-                </p>
-                <div className="flex gap-2 flex-wrap">
-                  <input
-                    type="text"
-                    value={manualId}
-                    onChange={e => setManualId(e.target.value)}
-                    placeholder="UCxxxxxxxxxxxxxxxxxx"
-                    className="flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500/50 text-sm"
-                    disabled={manualLoading}
-                  />
-                  <button
-                    onClick={() => { setManualId("UCA_NxRFfbYSG3kOeHak0BjQ"); }}
-                    className="px-3 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs"
-                    type="button"
-                  >
-                    Use Eagle 3D
-                  </button>
-                  <button
-                    onClick={lookupAndAddChannel}
-                    disabled={manualLoading || !manualId.trim()}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:opacity-50 inline-flex items-center gap-2"
-                  >
-                    {manualLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                    {manualLoading ? "Adding..." : "Add & Select"}
-                  </button>
-                  <button
-                    onClick={() => { setShowManualInput(false); setManualError(""); }}
-                    className="px-3 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs"
-                  >
-                    Cancel
-                  </button>
-                </div>
-                {manualError && (
-                  <p className="text-xs text-red-400 mt-2">❌ {manualError}</p>
-                )}
-              </div>
-            )}
-
-            {channels.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Found {channels.length} channel{channels.length === 1 ? "" : "s"}:</p>
-                  {!showManualInput && (
-                    <button onClick={() => setShowManualInput(true)} className="text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1">
-                      <Plus size={11} /> Add another by ID
-                    </button>
-                  )}
-                </div>
-                {channels.map(ch => {
-                  const isCurrent = currentId === ch.id;
-                  const isSelecting = selecting === ch.id;
-                  return (
-                    <button
-                      key={ch.id}
-                      onClick={() => selectChannel(ch)}
-                      disabled={isSelecting}
-                      className={`w-full text-left rounded-xl border p-3 sm:p-4 transition-all ${
-                        isCurrent ? "border-green-500/40 bg-green-500/10" : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-blue-500/30"
-                      } disabled:opacity-50`}
-                    >
-                      <div className="flex items-start gap-3 sm:gap-4">
-                        {ch.thumbnail ? (
-                          <img src={ch.thumbnail} alt="" className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex-shrink-0" />
-                        ) : (
-                          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-red-600/30 flex items-center justify-center flex-shrink-0">
-                            <Tv size={20} className="text-red-400" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-2 flex-wrap">
-                            <h3 className="text-white font-semibold text-sm sm:text-base truncate">{ch.title}</h3>
-                            {isCurrent && (
-                              <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30 flex items-center gap-1 flex-shrink-0">
-                                <CheckCircle size={10} /> Active
-                              </span>
-                            )}
-                          </div>
-                          {ch.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{ch.description}</p>}
-                          <div className="flex items-center gap-2 sm:gap-4 mt-2 text-xs text-gray-400 flex-wrap">
-                            <span className="flex items-center gap-1"><Users size={11} /> {(ch.subscribers || 0).toLocaleString()}</span>
-                            <span className="flex items-center gap-1"><Eye size={11} /> {(ch.totalViews || 0).toLocaleString()}</span>
-                            <span className="flex items-center gap-1"><Video size={11} /> {(ch.videoCount || 0).toLocaleString()}</span>
-                          </div>
-                          <p className="text-[10px] text-gray-600 mt-1 truncate">ID: {ch.id}</p>
-                        </div>
-                        {isSelecting && <Loader2 size={20} className="animate-spin text-blue-400 flex-shrink-0" />}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {debugInfo && (
-              <p className="text-[10px] text-gray-700 mt-4 text-center">
-                Debug: mine={debugInfo.mineCount} · managed={debugInfo.managedCount}
-              </p>
-            )}
-          </>
         )}
 
         <div className="mt-6 text-center">
