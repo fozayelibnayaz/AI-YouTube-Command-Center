@@ -1,6 +1,40 @@
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID!;
+let CHAT_ID_RAW = process.env.TELEGRAM_CHAT_ID || "";
 const TG_API = process.env.TELEGRAM_API_URL || "https://api.telegram.org";
+
+// AUTO-CORRECT chat ID format
+// Telegram group/channel IDs MUST start with -100
+function normalizeChatId(id: string): string {
+  const cleaned = id.trim();
+  if (!cleaned) return "";
+
+  // Already correct format
+  if (cleaned.startsWith("-100")) return cleaned;
+
+  // Has minus but missing 100 (e.g., -1003813320209 typed as -3813320209)
+  if (cleaned.startsWith("-") && !cleaned.startsWith("-100")) {
+    return "-100" + cleaned.substring(1);
+  }
+
+  // Numeric starting with 100 (e.g., 1003813320209) - missing minus
+  if (cleaned.startsWith("100") && cleaned.length >= 13) {
+    return "-" + cleaned;
+  }
+
+  // Plain user ID (positive number, short) - leave as-is
+  if (/^\d+$/.test(cleaned) && cleaned.length < 12) {
+    return cleaned;
+  }
+
+  // Long positive number = probably group ID missing prefix
+  if (/^\d+$/.test(cleaned) && cleaned.length >= 12) {
+    return "-100" + cleaned;
+  }
+
+  return cleaned;
+}
+
+const CHAT_ID = normalizeChatId(CHAT_ID_RAW);
 
 function isConfigured(): boolean {
   return (
@@ -21,9 +55,7 @@ const emoji: Record<string, string> = {
 
 function ts(): string {
   return new Date().toLocaleString("en-US", {
-    timeZone: "Asia/Dhaka",
-    dateStyle: "medium",
-    timeStyle: "short",
+    timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short",
   });
 }
 
@@ -33,7 +65,7 @@ export async function sendTelegram(
   type: string, title: string, message: string,
   data?: Record<string, string | number>, options?: TelegramOptions
 ): Promise<{ success: boolean; error?: string; message_id?: number }> {
-  if (!isConfigured()) return { success: false, error: "Telegram env vars missing or invalid" };
+  if (!isConfigured()) return { success: false, error: "Telegram env vars missing" };
 
   let text = (emoji[type] || "📢") + " *" + title + "*\n";
   text += "━━━━━━━━━━━━━━━━━━━━━━━\n";
@@ -47,26 +79,21 @@ export async function sendTelegram(
 
   try {
     const body: any = {
-      chat_id: CHAT_ID,
-      text,
-      parse_mode: "Markdown",
-      disable_web_page_preview: true,
+      chat_id: CHAT_ID, text,
+      parse_mode: "Markdown", disable_web_page_preview: true,
     };
     if (options?.silent) body.disable_notification = true;
 
-    const url = TG_API + "/bot" + BOT_TOKEN + "/sendMessage";
-    const res = await fetch(url, {
+    const res = await fetch(TG_API + "/bot" + BOT_TOKEN + "/sendMessage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
     const json = await res.json();
     if (!json.ok) {
-      console.error("Telegram error:", json);
-      return { success: false, error: json.description || "Telegram API rejected message" };
+      console.error("Telegram error:", json, "Used chat_id:", CHAT_ID);
+      return { success: false, error: (json.description || "Telegram rejected") + " (chat_id used: " + CHAT_ID + ")" };
     }
-
     if (options?.pin && isGroup() && json.result?.message_id) {
       await fetch(TG_API + "/bot" + BOT_TOKEN + "/pinChatMessage", {
         method: "POST",
@@ -85,9 +112,9 @@ export async function sendWithButtons(
   buttons: Array<{ text: string; url: string }>,
   data?: Record<string, string | number>
 ): Promise<{ success: boolean; error?: string }> {
-  if (!isConfigured()) return { success: false, error: "Telegram env vars missing or invalid" };
+  if (!isConfigured()) return { success: false, error: "Telegram env vars missing" };
 
-  let text = (emoji[type] || "��") + " *" + title + "*\n";
+  let text = (emoji[type] || "📢") + " *" + title + "*\n";
   text += "━━━━━━━━━━━━━━━━━━━━━━━\n";
   text += message + "\n";
   if (data) {
@@ -101,8 +128,7 @@ export async function sendWithButtons(
 
   try {
     const res = await fetch(TG_API + "/bot" + BOT_TOKEN + "/sendMessage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: CHAT_ID, text, parse_mode: "Markdown",
         disable_web_page_preview: true,
@@ -112,7 +138,7 @@ export async function sendWithButtons(
     const json = await res.json();
     if (!json.ok) {
       console.error("Telegram error:", json);
-      return { success: false, error: json.description || "Telegram API rejected" };
+      return { success: false, error: (json.description || "Telegram rejected") + " (chat_id: " + CHAT_ID + ")" };
     }
     return { success: true };
   } catch (e: any) {
@@ -125,7 +151,6 @@ export async function sendPhoto(
   buttons?: Array<{ text: string; url: string }>
 ): Promise<{ success: boolean; error?: string }> {
   if (!isConfigured()) return { success: false, error: "Not configured" };
-
   try {
     const body: any = { chat_id: CHAT_ID, photo: photoUrl, caption, parse_mode: "Markdown" };
     if (buttons) {
@@ -194,3 +219,7 @@ export const notify = {
   error: (location: string, error: string) =>
     sendTelegram("error", "System Error", "Error needs attention.", { Location: location, Error: error.substring(0, 80) }),
 };
+
+// Export the normalized chat ID for debugging
+export const NORMALIZED_CHAT_ID = CHAT_ID;
+export const RAW_CHAT_ID = CHAT_ID_RAW;
