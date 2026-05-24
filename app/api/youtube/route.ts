@@ -5,8 +5,7 @@ export const dynamic = "force-dynamic";
 
 function safeJson(data: any, status: number = 200) {
   return new NextResponse(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
+    status, headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -14,7 +13,6 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action") || "channel";
-    const days = parseInt(searchParams.get("days") || "90");
 
     if (action === "channel") {
       const data = await getChannelInfo();
@@ -22,8 +20,13 @@ export async function GET(req: NextRequest) {
     }
     if (action === "videos") {
       const max = parseInt(searchParams.get("max") || "500");
-      const data = await getChannelVideos(max, days);
-      return safeJson({ success: true, data, count: data.length, daysBack: days });
+      const startDate = searchParams.get("startDate") || undefined;
+      const endDate = searchParams.get("endDate") || undefined;
+      const data = await getChannelVideos(max, startDate, endDate);
+      return safeJson({
+        success: true, data, count: data.length,
+        startDate, endDate,
+      });
     }
     return safeJson({ success: false, error: "Unknown action" }, 400);
   } catch (e: any) {

@@ -3,25 +3,20 @@ import { useState, useEffect } from "react";
 import { StatCard } from "@/components/ui/stat-card";
 import { VideoCard } from "@/components/dashboard/video-card";
 import { OAuthBanner } from "@/components/oauth-banner";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { ComparisonCard } from "@/components/ui/comparison-card";
 import { calculatePerformanceScore, formatNumber } from "@/lib/utils";
+import { DateRange, getPresetRanges } from "@/lib/date-ranges";
 import {
   Eye, Users, Heart, MessageSquare, TrendingUp, Clock, Share2,
   Bell, RefreshCw, Trophy, AlertTriangle, Brain, BarChart3, Zap,
-  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send, Calendar
+  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Activity, X, Send,
+  GitCompareArrows
 } from "lucide-react";
-
-const DATE_RANGES = [
-  { label: "7 Days", days: 7 },
-  { label: "28 Days", days: 28 },
-  { label: "Last Month", days: 30 },
-  { label: "3 Months", days: 90 },
-  { label: "6 Months", days: 180 },
-  { label: "1 Year", days: 365 },
-  { label: "All Time", days: 3650 },
-];
 
 export default function DashboardPage() {
   const [data, setData] = useState<any>(null);
+  const [comparisonData, setComparisonData] = useState<any>(null);
   const [analyses, setAnalyses] = useState<Record<string, any>>({});
   const [analyzing, setAnalyzing] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -34,14 +29,18 @@ export default function DashboardPage() {
   const [showEvents, setShowEvents] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [hasRealData, setHasRealData] = useState(false);
-  const [dateRange, setDateRange] = useState(90);
 
-  async function fetchData(days: number = dateRange) {
+  // Default to "Last 3 Months"
+  const defaultRange = getPresetRanges().find(r => r.label === "Last 3 Months")!;
+  const [range, setRange] = useState<DateRange>(defaultRange);
+
+  async function fetchData(r: DateRange = range) {
     setLoading(true);
     try {
+      // Fetch current period
       const [chRes, vidRes] = await Promise.all([
         fetch("/api/youtube?action=channel"),
-        fetch("/api/youtube?action=videos&max=500&days=" + days),
+        fetch(`/api/youtube?action=videos&max=500&startDate=${r.startDate}&endDate=${r.endDate}`),
       ]);
       const ch = await chRes.json();
       const vid = await vidRes.json();
@@ -60,27 +59,21 @@ export default function DashboardPage() {
       const realCount = videos.filter((v: any) => v.has_real_analytics).length;
       setHasRealData(realCount > 0);
 
-      const totalViews = videos.reduce((s: number, v: any) => s + (v.views || 0), 0);
-      const totalLikes = videos.reduce((s: number, v: any) => s + (v.likes || 0), 0);
-      const totalComments = videos.reduce((s: number, v: any) => s + (v.comments || 0), 0);
-      const totalShares = videos.reduce((s: number, v: any) => s + (v.shares || 0), 0);
-      const totalWatchTime = videos.reduce((s: number, v: any) => s + (v.watch_time_minutes || 0), 0);
-      const totalSubsGained = videos.reduce((s: number, v: any) => s + (v.subscribers_gained || 0), 0);
-      const avgEng = totalViews > 0 ? ((totalLikes + totalComments) / totalViews) * 100 : 0;
+      const stats = computeStats(videos);
 
-      const retVids = videos.filter((v: any) => v.avg_view_percentage !== null && v.avg_view_percentage !== undefined);
-      const avgRetention = retVids.length > 0 ? retVids.reduce((s: number, v: any) => s + v.avg_view_percentage, 0) / retVids.length : null;
+      setData({ channel: ch.data, videos, stats, range: r });
 
-      setData({
-        channel: ch.data,
-        videos,
-        stats: {
-          totalViews, totalLikes, totalComments, totalShares, totalWatchTime,
-          totalSubsGained, avgEng, avgRetention,
-          realCount, total: videos.length,
-          activeVideos: videos.filter((v: any) => (v.views || 0) > 0).length,
-        },
-      });
+      // If comparison range, fetch previous period too
+      if (r.type === "comparison" && r.comparison) {
+        const cmpRes = await fetch(`/api/youtube?action=videos&max=500&startDate=${r.comparison.startDate}&endDate=${r.comparison.endDate}`);
+        const cmpJson = await cmpRes.json();
+        const cmpVideos = (cmpJson.data || []).map((v: any) => ({ ...v, ...(v.analytics || {}) }));
+        const cmpStats = computeStats(cmpVideos);
+        setComparisonData({ videos: cmpVideos, stats: cmpStats, range: r.comparison });
+      } else {
+        setComparisonData(null);
+      }
+
       setLastSync(new Date().toLocaleTimeString());
     } catch (e) {
       console.error(e);
@@ -90,9 +83,27 @@ export default function DashboardPage() {
     }
   }
 
-  function onDateRangeChange(days: number) {
-    setDateRange(days);
-    fetchData(days);
+  function computeStats(videos: any[]) {
+    const totalViews = videos.reduce((s: number, v: any) => s + (v.views || 0), 0);
+    const totalLikes = videos.reduce((s: number, v: any) => s + (v.likes || 0), 0);
+    const totalComments = videos.reduce((s: number, v: any) => s + (v.comments || 0), 0);
+    const totalShares = videos.reduce((s: number, v: any) => s + (v.shares || 0), 0);
+    const totalWatchTime = videos.reduce((s: number, v: any) => s + (v.watch_time_minutes || 0), 0);
+    const totalSubsGained = videos.reduce((s: number, v: any) => s + (v.subscribers_gained || 0), 0);
+    const avgEng = totalViews > 0 ? ((totalLikes + totalComments) / totalViews) * 100 : 0;
+    const retVids = videos.filter((v: any) => v.avg_view_percentage !== null && v.avg_view_percentage !== undefined);
+    const avgRetention = retVids.length > 0 ? retVids.reduce((s: number, v: any) => s + v.avg_view_percentage, 0) / retVids.length : 0;
+
+    return {
+      totalViews, totalLikes, totalComments, totalShares, totalWatchTime,
+      totalSubsGained, avgEng, avgRetention,
+      activeVideos: videos.filter((v: any) => (v.views || 0) > 0).length,
+    };
+  }
+
+  function onRangeChange(r: DateRange) {
+    setRange(r);
+    fetchData(r);
   }
 
   async function analyzeVideo(id: string) {
@@ -107,10 +118,9 @@ export default function DashboardPage() {
       const json = await res.json();
       if (json.success) {
         setAnalyses(prev => ({ ...prev, [id]: json.data }));
-        const topId = getBestWorst().best?.youtube_id;
-        const worstId = getBestWorst().worst?.youtube_id;
-        if (id === topId) setTopExpanded(true);
-        if (id === worstId) setWorstExpanded(true);
+        const bw = getBestWorst();
+        if (id === bw.best?.youtube_id) setTopExpanded(true);
+        if (id === bw.worst?.youtube_id) setWorstExpanded(true);
       }
     } finally {
       setAnalyzing(prev => ({ ...prev, [id]: false }));
@@ -122,72 +132,51 @@ export default function DashboardPage() {
     try {
       const res = await fetch("/api/notifications");
       const json = await res.json();
-      if (json.success) {
-        setEvents(json.events || []);
-        setShowEvents(true);
-        setStatus(`📊 ${json.eventsDetected} unique events detected`);
-      } else setStatus("❌ " + (json.error || "Unknown"));
+      if (json.success) { setEvents(json.events || []); setShowEvents(true); setStatus(`📊 ${json.eventsDetected} events`); }
+      else setStatus("❌ " + (json.error || "Unknown"));
     } catch (e) { setStatus("❌ " + String(e)); }
     finally { setEventsLoading(false); setTimeout(() => setStatus(""), 8000); }
   }
 
   async function sendSmartAlerts() {
-    setEventsLoading(true); setStatus("📤 Sending alerts to Telegram...");
+    setEventsLoading(true); setStatus("📤 Sending...");
     try {
       const res = await fetch("/api/notifications?send=true");
       const json = await res.json();
       if (json.success) {
-        setEvents(json.events || []);
-        setShowEvents(true);
-        if (json.sentSuccess === json.sent) {
-          setStatus(`✅ All ${json.sentSuccess} alerts sent successfully!`);
-        } else {
-          const errors = json.uniqueErrors?.join("; ") || "Unknown error";
-          setStatus(`⚠️ ${json.sentSuccess}/${json.sent} sent. Errors: ${errors}\n→ Visit /api/telegram-debug to diagnose`);
-        }
+        setEvents(json.events || []); setShowEvents(true);
+        if (json.sentSuccess === json.sent) setStatus(`✅ All ${json.sentSuccess} alerts sent!`);
+        else setStatus(`⚠️ ${json.sentSuccess}/${json.sent} sent`);
       } else setStatus("❌ " + (json.error || "Unknown"));
     } catch (e) { setStatus("❌ " + String(e)); }
-    finally { setEventsLoading(false); setTimeout(() => setStatus(""), 15000); }
+    finally { setEventsLoading(false); setTimeout(() => setStatus(""), 10000); }
   }
 
   async function sendTelegramTest() {
-    setSyncing(true); setStatus("�� Testing Telegram...");
+    setSyncing(true); setStatus("📤 Testing...");
     try {
       const res = await fetch("/api/telegram");
       const json = await res.json();
-      if (json.success) {
-        setStatus("✅ Telegram works! Check your chat.");
-      } else {
-        setStatus(`❌ Telegram failed: ${json.error || "Unknown"}\n→ Visit /api/telegram-debug to diagnose`);
-      }
+      setStatus(json.success ? "✅ Telegram works!" : "❌ " + (json.error || "Failed"));
     } catch (e) { setStatus("❌ " + String(e)); }
-    finally { setSyncing(false); setTimeout(() => setStatus(""), 10000); }
+    finally { setSyncing(false); setTimeout(() => setStatus(""), 5000); }
   }
 
-  // SMART best/worst that ignores 0-view videos
   function getBestWorst() {
     if (!data?.videos?.length) return { best: null, worst: null };
     const active = data.videos.filter((v: any) => (v.views || 0) > 0);
     if (active.length === 0) return { best: null, worst: null };
     const sorted = [...active].sort((a, b) => (b.score || 0) - (a.score || 0));
-    return {
-      best: sorted[0],
-      worst: sorted.length > 1 ? sorted[sorted.length - 1] : null,
-    };
+    return { best: sorted[0], worst: sorted.length > 1 ? sorted[sorted.length - 1] : null };
   }
 
   useEffect(() => {
-    fetchData(dateRange);
+    fetchData(range);
     const params = new URLSearchParams(window.location.search);
-    if (params.get("oauth_success")) {
-      setStatus("✅ YouTube connected! Loading data...");
-      window.history.replaceState({}, "", "/dashboard");
-    }
-    if (params.get("oauth_error")) {
-      setStatus("❌ OAuth error: " + params.get("oauth_error"));
-      window.history.replaceState({}, "", "/dashboard");
-    }
-    const i = setInterval(() => fetchData(dateRange), 5 * 60 * 1000);
+    if (params.get("oauth_success")) setStatus("✅ YouTube connected!");
+    if (params.get("oauth_error")) setStatus("❌ OAuth: " + params.get("oauth_error"));
+    window.history.replaceState({}, "", "/dashboard");
+    const i = setInterval(() => fetchData(range), 5 * 60 * 1000);
     return () => clearInterval(i);
   }, []);
 
@@ -203,6 +192,7 @@ export default function DashboardPage() {
   }
 
   const { best: topVideo, worst: worstVideo } = getBestWorst();
+  const isComparison = range.type === "comparison" && comparisonData;
 
   return (
     <div className="p-3 sm:p-4 lg:p-6">
@@ -215,7 +205,7 @@ export default function DashboardPage() {
               <span className="leading-tight">AI YouTube Command Center</span>
             </h1>
             <p className="text-gray-400 mt-1 text-xs sm:text-sm">
-              {data?.channel?.title || "Loading"} · {formatNumber(data?.channel?.subscribers || 0)} subs · {data?.videos?.length || 0} videos
+              {data?.channel?.title} · {formatNumber(data?.channel?.subscribers || 0)} subs · {data?.videos?.length || 0} videos
               ({data?.stats?.activeVideos || 0} with views)
               {hasRealData && <span className="ml-2 text-green-400 text-[10px] bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">✓ REAL</span>}
               {lastSync && <span className="text-gray-600 ml-2">Synced: {lastSync}</span>}
@@ -224,31 +214,8 @@ export default function DashboardPage() {
 
           <OAuthBanner />
 
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Calendar size={14} className="text-blue-400" />
-              <span className="text-xs sm:text-sm text-gray-400 font-medium">Date Range:</span>
-            </div>
-            <div className="flex gap-1.5 sm:gap-2 flex-wrap">
-              {DATE_RANGES.map(r => (
-                <button
-                  key={r.days}
-                  onClick={() => onDateRangeChange(r.days)}
-                  disabled={loading}
-                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-medium transition-all ${
-                    dateRange === r.days
-                      ? "bg-blue-600 text-white border border-blue-500"
-                      : "bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10"
-                  } disabled:opacity-50`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] sm:text-xs text-gray-500 mt-2">
-              {dateRange === 3650 ? "All-time" : `Last ${dateRange} days`}
-            </p>
-          </div>
+          {/* Date Range Picker */}
+          <DateRangePicker value={range} onChange={onRangeChange} />
 
           <div className="grid grid-cols-2 lg:flex lg:flex-wrap gap-2">
             <button onClick={previewEvents} disabled={eventsLoading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs sm:text-sm disabled:opacity-50">
@@ -261,7 +228,7 @@ export default function DashboardPage() {
             <button onClick={sendTelegramTest} disabled={syncing} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-white/20 hover:bg-white/10 text-white text-xs sm:text-sm disabled:opacity-50">
               <Bell size={14} /> Test
             </button>
-            <button onClick={() => fetchData(dateRange)} disabled={loading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm disabled:opacity-50">
+            <button onClick={() => fetchData(range)} disabled={loading} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm disabled:opacity-50">
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Sync
             </button>
           </div>
@@ -296,15 +263,6 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] sm:text-xs font-medium text-gray-300">{e.type.replace(/_/g, " ").toUpperCase()}</p>
                     <p className="text-xs sm:text-sm text-white mt-0.5">{e.message}</p>
-                    {e.data && Object.keys(e.data).length > 0 && (
-                      <div className="flex flex-wrap gap-1 sm:gap-2 mt-2">
-                        {Object.entries(e.data).slice(0, 6).map(([k, v]) => (
-                          <span key={k} className="text-[10px] sm:text-xs bg-black/30 px-1.5 sm:px-2 py-0.5 rounded text-gray-400 truncate max-w-full">
-                            {k}: <span className="text-white">{String(v).substring(0, 40)}</span>
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               ))}
@@ -312,18 +270,43 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
-          <StatCard title="Total Views" value={data?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" format="number" />
-          <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" />
-          <StatCard title="Total Likes" value={data?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" format="number" />
-          <StatCard title="Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" />
-          {data?.stats?.avgRetention !== null && data?.stats?.avgRetention !== undefined ? (
-            <StatCard title="Avg Retention" value={parseFloat(data.stats.avgRetention.toFixed(1))} icon={<Clock size={16} />} color={data.stats.avgRetention >= 35 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
-          ) : (
-            <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="yellow" format="percent" subtitle="real calc" />
-          )}
-          <StatCard title={hasRealData ? "Watch Hrs" : "Shares"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : (data?.stats?.totalShares || 0)} icon={hasRealData ? <Clock size={16} /> : <Share2 size={16} />} color="cyan" format="number" subtitle={hasRealData ? "✓ REAL" : "shares"} />
-        </div>
+        {/* Comparison View or Single Period View */}
+        {isComparison ? (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <GitCompareArrows size={16} className="text-purple-400" />
+              <h2 className="text-base sm:text-lg font-bold text-white">Period Comparison</h2>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+              <span className="text-blue-400">{range.startDate} → {range.endDate}</span>
+              {" vs "}
+              <span className="text-purple-400">{range.comparison?.startDate} → {range.comparison?.endDate}</span>
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+              <ComparisonCard title="Total Views" current={data?.stats?.totalViews || 0} previous={comparisonData?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" />
+              <ComparisonCard title="Total Likes" current={data?.stats?.totalLikes || 0} previous={comparisonData?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" />
+              <ComparisonCard title="Comments" current={data?.stats?.totalComments || 0} previous={comparisonData?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" />
+              <ComparisonCard title="Engagement" current={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} previous={parseFloat((comparisonData?.stats?.avgEng || 0).toFixed(2))} format="percent" icon={<TrendingUp size={16} />} color="yellow" />
+              {hasRealData && <ComparisonCard title="Avg Retention" current={parseFloat((data?.stats?.avgRetention || 0).toFixed(1))} previous={parseFloat((comparisonData?.stats?.avgRetention || 0).toFixed(1))} format="percent" icon={<Clock size={16} />} color="green" />}
+              {hasRealData && <ComparisonCard title="Watch Hours" current={Math.round((data?.stats?.totalWatchTime || 0) / 60)} previous={Math.round((comparisonData?.stats?.totalWatchTime || 0) / 60)} icon={<Clock size={16} />} color="cyan" />}
+              {hasRealData && <ComparisonCard title="Shares" current={data?.stats?.totalShares || 0} previous={comparisonData?.stats?.totalShares || 0} icon={<Share2 size={16} />} color="purple" />}
+              {hasRealData && <ComparisonCard title="Subs Gained" current={data?.stats?.totalSubsGained || 0} previous={comparisonData?.stats?.totalSubsGained || 0} icon={<Users size={16} />} color="green" />}
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+            <StatCard title="Total Views" value={data?.stats?.totalViews || 0} icon={<Eye size={16} />} color="blue" format="number" />
+            <StatCard title="Subscribers" value={data?.channel?.subscribers || 0} icon={<Users size={16} />} color="green" format="number" />
+            <StatCard title="Total Likes" value={data?.stats?.totalLikes || 0} icon={<Heart size={16} />} color="red" format="number" />
+            <StatCard title="Comments" value={data?.stats?.totalComments || 0} icon={<MessageSquare size={16} />} color="purple" format="number" />
+            {data?.stats?.avgRetention > 0 ? (
+              <StatCard title="Avg Retention" value={parseFloat(data.stats.avgRetention.toFixed(1))} icon={<Clock size={16} />} color={data.stats.avgRetention >= 35 ? "green" : "yellow"} format="percent" subtitle="✓ REAL" />
+            ) : (
+              <StatCard title="Engagement" value={parseFloat((data?.stats?.avgEng || 0).toFixed(2))} icon={<TrendingUp size={16} />} color="yellow" format="percent" subtitle="real calc" />
+            )}
+            <StatCard title={hasRealData ? "Watch Hrs" : "Shares"} value={hasRealData ? Math.round((data?.stats?.totalWatchTime || 0) / 60) : (data?.stats?.totalShares || 0)} icon={hasRealData ? <Clock size={16} /> : <Share2 size={16} />} color="cyan" format="number" subtitle={hasRealData ? "✓ REAL" : ""} />
+          </div>
+        )}
 
         {topVideo && worstVideo && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
@@ -364,7 +347,7 @@ function BestWorstCard({ video, type, expanded, setExpanded, analysis, analyzing
       <div className="p-3 sm:p-4">
         <div className="flex items-center gap-2 mb-2 sm:mb-3">
           {isBest ? <Trophy size={16} className="text-yellow-400" /> : <AlertTriangle size={16} className="text-red-400" />}
-          <span className={`text-xs sm:text-sm font-medium ${isBest ? "text-green-400" : "text-red-400"}`}>{isBest ? "BEST" : "WORST (with views)"} Performing</span>
+          <span className={`text-xs sm:text-sm font-medium ${isBest ? "text-green-400" : "text-red-400"}`}>{isBest ? "BEST" : "WORST"} Performing</span>
           {video.has_real_analytics && <span className="text-[10px] bg-green-500/10 text-green-400 px-1.5 py-0.5 rounded">REAL</span>}
         </div>
         <p className="text-white font-medium text-xs sm:text-sm mb-2 line-clamp-2">{video.title}</p>
