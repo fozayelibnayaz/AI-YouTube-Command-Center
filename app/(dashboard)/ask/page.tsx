@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { Brain, Send, User, Bot, Sparkles, Loader2 } from "lucide-react";
+import { Brain, Send, User, Bot, Sparkles, Loader2, Trash2, Copy, Check } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
@@ -11,19 +11,24 @@ interface Message {
 
 const SUGGESTED = [
   "How is my channel doing overall?",
-  "What is my best performing video and why?",
-  "Why is my CTR low? How to fix it?",
+  "What's my best performing video and why?",
   "Which videos have the worst retention?",
-  "What content should I create next?",
-  "Show me my engagement stats",
-  "Which videos need new thumbnails?",
-  "What are my channel strengths and weaknesses?",
+  "What content should I create next based on my data?",
+  "Show me engagement breakdown",
+  "What's my average watch time?",
+  "Compare my top 5 vs bottom 5 videos",
+  "What patterns do you see in my viral videos?",
+  "Why are some videos getting 0 views?",
+  "Give me a 30-day action plan",
+  "What times should I upload?",
+  "Which videos should I make Part 2 of?",
 ];
 
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -32,37 +37,68 @@ export default function AskPage() {
     if (!question.trim()) return;
     const q = question.trim();
     setInput("");
-    setMessages(prev => [...prev, { role: "user", content: q, timestamp: new Date().toLocaleTimeString() }]);
+    const newMsgs = [...messages, { role: "user" as const, content: q, timestamp: new Date().toLocaleTimeString() }];
+    setMessages(newMsgs);
     setLoading(true);
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({
+          question: q,
+          history: newMsgs.slice(-6).map(m => ({ role: m.role, content: m.content })),
+        }),
       });
-      const json = await res.json();
+      const text = await res.text();
+      let json: any;
+      try { json = JSON.parse(text); }
+      catch {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: "Server error - returned invalid response. Please try again or contact support.",
+          timestamp: new Date().toLocaleTimeString(),
+        }]);
+        return;
+      }
       setMessages(prev => [...prev, {
         role: "assistant",
-        content: json.success ? json.answer : "Error: " + (json.error || "Failed"),
+        content: json.success ? json.answer : "Error: " + (json.error || "Failed to get answer"),
         source: json.source,
         timestamp: new Date().toLocaleTimeString(),
       }]);
     } catch (e) {
-      setMessages(prev => [...prev, { role: "assistant", content: "Error: " + String(e), timestamp: new Date().toLocaleTimeString() }]);
+      setMessages(prev => [...prev, { role: "assistant", content: "Network error: " + String(e), timestamp: new Date().toLocaleTimeString() }]);
     } finally {
       setLoading(false);
     }
   }
 
+  function copyMessage(i: number, content: string) {
+    navigator.clipboard.writeText(content);
+    setCopiedIdx(i);
+    setTimeout(() => setCopiedIdx(null), 2000);
+  }
+
+  function clearChat() {
+    if (confirm("Clear conversation?")) setMessages([]);
+  }
+
   return (
     <div className="flex flex-col min-h-screen p-3 sm:p-4 lg:p-6">
       <div className="max-w-4xl mx-auto w-full flex flex-col flex-1 min-h-0">
-        <div className="mb-4 sm:mb-6">
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white flex items-center gap-2 sm:gap-3">
-            <Brain className="text-purple-400 flex-shrink-0" size={24} />
-            Ask AI About Your Channel
-          </h1>
-          <p className="text-gray-400 mt-1 text-xs sm:text-sm">AI analyzes all your videos to answer.</p>
+        <div className="mb-4 sm:mb-6 flex items-start justify-between gap-2">
+          <div>
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white flex items-center gap-2 sm:gap-3">
+              <Brain className="text-purple-400 flex-shrink-0" size={24} />
+              Ask AI About Your Channel
+            </h1>
+            <p className="text-gray-400 mt-1 text-xs sm:text-sm">AI analyzes all your real video data. Conversation has memory.</p>
+          </div>
+          {messages.length > 0 && (
+            <button onClick={clearChat} className="text-xs text-gray-400 hover:text-red-400 flex items-center gap-1 px-2 py-1 rounded border border-white/10">
+              <Trash2 size={12} /> Clear
+            </button>
+          )}
         </div>
 
         {messages.length === 0 && (
@@ -94,6 +130,11 @@ export default function AskPage() {
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <span className="text-[10px] sm:text-xs text-gray-600">{msg.timestamp}</span>
                     {msg.source && <span className="text-[10px] sm:text-xs text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded">{msg.source}</span>}
+                    {msg.role === "assistant" && (
+                      <button onClick={() => copyMessage(i, msg.content)} className="text-[10px] text-gray-500 hover:text-white ml-auto">
+                        {copiedIdx === i ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
+                      </button>
+                    )}
                   </div>
                 </div>
                 {msg.role === "user" && (
@@ -109,7 +150,7 @@ export default function AskPage() {
                   <Loader2 size={14} className="text-purple-400 animate-spin" />
                 </div>
                 <div className="bg-white/5 border border-white/10 rounded-xl p-3 sm:p-4">
-                  <p className="text-xs sm:text-sm text-gray-400">Analyzing...</p>
+                  <p className="text-xs sm:text-sm text-gray-400">Analyzing your channel data...</p>
                 </div>
               </div>
             )}
