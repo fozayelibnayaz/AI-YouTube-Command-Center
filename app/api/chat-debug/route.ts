@@ -17,57 +17,58 @@ export async function GET() {
     tests: [],
   };
 
-  // Test Groq directly
-  if (process.env.GROQ_API_KEY) {
+  if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.length > 20) {
     try {
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + process.env.GROQ_API_KEY },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: "Say hello in 5 words" }],
-          temperature: 0.5, max_tokens: 50,
+          messages: [{ role: "user", content: "Reply with: WORKING" }],
+          temperature: 0.1, max_tokens: 10,
         }),
       });
       const data = await res.json();
       debug.tests.push({
-        name: "groq_api",
-        status: res.status,
+        name: "groq",
+        httpStatus: res.status,
         ok: !data.error,
         response: data.choices?.[0]?.message?.content,
         error: data.error?.message,
       });
     } catch (e: any) {
-      debug.tests.push({ name: "groq_api", exception: e.message });
+      debug.tests.push({ name: "groq", exception: e.message });
     }
+  } else {
+    debug.tests.push({ name: "groq", skipped: "No GROQ_API_KEY set" });
   }
 
-  // Test OpenAI directly
-  if (process.env.OPENAI_API_KEY) {
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 20) {
     try {
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + process.env.OPENAI_API_KEY },
         body: JSON.stringify({
           model: "gpt-4o-mini",
-          messages: [{ role: "user", content: "Say hello in 5 words" }],
-          temperature: 0.5, max_tokens: 50,
+          messages: [{ role: "user", content: "Reply with: WORKING" }],
+          temperature: 0.1, max_tokens: 10,
         }),
       });
       const data = await res.json();
       debug.tests.push({
-        name: "openai_api",
-        status: res.status,
+        name: "openai",
+        httpStatus: res.status,
         ok: !data.error,
         response: data.choices?.[0]?.message?.content,
         error: data.error?.message,
       });
     } catch (e: any) {
-      debug.tests.push({ name: "openai_api", exception: e.message });
+      debug.tests.push({ name: "openai", exception: e.message });
     }
+  } else {
+    debug.tests.push({ name: "openai", skipped: "No OPENAI_API_KEY set" });
   }
 
-  // Test data fetching
   try {
     const { getChannelInfo, getChannelVideos } = await import("@/lib/youtube");
     const ch = await getChannelInfo();
@@ -77,7 +78,6 @@ export async function GET() {
       ok: true,
       channel: ch?.title,
       videoCount: vids?.length,
-      firstVideo: vids?.[0]?.title,
     });
   } catch (e: any) {
     debug.tests.push({ name: "data_fetch", exception: e.message });

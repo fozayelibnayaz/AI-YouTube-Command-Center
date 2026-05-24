@@ -22,10 +22,7 @@ async function callAI(prompt: string, system: string): Promise<string> {
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + GROQ_KEY },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: prompt },
-        ],
+        messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
         temperature: 0.7, max_tokens: 3000,
       }),
     });
@@ -38,10 +35,7 @@ async function callAI(prompt: string, system: string): Promise<string> {
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + OPENAI_KEY },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: prompt },
-        ],
+        messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
         temperature: 0.7, max_tokens: 3000,
       }),
     });
@@ -64,18 +58,17 @@ function buildChannelContext(videos: any[], channel: any): string {
   let ctx = "CHANNEL: " + (channel?.title || "Unknown") + "\n";
   ctx += "Subscribers: " + (channel?.subscribers || 0) + "\n";
   ctx += "Videos: " + videos.length + " (" + active.length + " active)\n";
-  ctx += "Total Views: " + totalViews + "\n";
-  ctx += "Avg Engagement: " + avgEng.toFixed(2) + "%\n";
-  ctx += "Avg Retention: " + avgRet.toFixed(1) + "%\n\n";
+  ctx += "Total Views: " + totalViews + "\nAvg Engagement: " + avgEng.toFixed(2) + "%\nAvg Retention: " + avgRet.toFixed(1) + "%\n\n";
 
-  ctx += "TOP 15 VIDEOS:\n";
-  for (const v of sorted.slice(0, 15)) {
+  ctx += "TOP 20 VIDEOS:\n";
+  for (const v of sorted.slice(0, 20)) {
     ctx += "- \"" + v.title + "\" | V:" + v.views + " L:" + v.likes + " C:" + v.comments + " S:" + (v.score || 0);
     if (v.avg_view_percentage != null) ctx += " Ret:" + v.avg_view_percentage.toFixed(1) + "%";
+    if (v.tags?.length) ctx += " Tags:" + v.tags.slice(0, 5).join(",");
     ctx += "\n";
   }
 
-  ctx += "\nBOTTOM 10 (with views):\n";
+  ctx += "\nBOTTOM 10 VIDEOS:\n";
   for (const v of active.sort((a, b) => (a.score || 0) - (b.score || 0)).slice(0, 10)) {
     ctx += "- \"" + v.title + "\" | V:" + v.views + " S:" + (v.score || 0) + "\n";
   }
@@ -85,44 +78,65 @@ function buildChannelContext(videos: any[], channel: any): string {
 
 const TOOL_PROMPTS: Record<string, { system: string; prompt: (ctx: string, topic: string) => string }> = {
   content_strategy: {
-    system: "You are a YouTube growth strategist. Create specific content strategies using the channel's REAL data. Reference actual video titles. Give 5-10 concrete video ideas.",
-    prompt: (ctx, _) => ctx + "\n\nBased on this REAL channel data, create a 90-day content strategy with:\n1. Top 3 themes that work for this channel\n2. 10 specific video title ideas to make next (based on what's working)\n3. Optimal video length (based on top performers)\n4. Series ideas to build on success\n5. Topics to AVOID (based on what failed)",
+    system: "You are a YouTube growth strategist. Create specific strategies using REAL channel data.",
+    prompt: (ctx, _) => ctx + "\n\nCreate a 90-day content strategy:\n1. Top 3 themes that work\n2. 10 specific video ideas\n3. Optimal video length\n4. Series ideas\n5. Topics to AVOID",
   },
   competitor_gap: {
-    system: "You are a YouTube competitive intelligence expert. Analyze gaps and opportunities.",
-    prompt: (ctx, topic) => ctx + "\n\n" + (topic ? "Competitor: " + topic + "\n\n" : "") + "Find content gaps and opportunities:\n1. Topics this channel covers WELL\n2. Topics it should cover but doesn't\n3. Underserved areas in their niche\n4. 5 specific video ideas that fill the gap\n5. Format opportunities (Shorts, livestreams, etc.)",
+    system: "You are a YouTube competitive intelligence expert.",
+    prompt: (ctx, topic) => ctx + (topic ? "\n\nCompetitor: " + topic : "") + "\n\nFind content gaps:\n1. Topics this channel covers well\n2. Topics it should cover but doesn't\n3. Underserved niche areas\n4. 5 specific video ideas\n5. Format opportunities",
   },
   thumbnail_audit: {
-    system: "You are a thumbnail design expert. Analyze patterns in successful vs failing thumbnails based on titles and metrics.",
-    prompt: (ctx, _) => ctx + "\n\nBased on the data, give a Thumbnail Performance Audit:\n1. Common patterns in TOP performing videos (titles suggest themes)\n2. Common patterns in BOTTOM performing videos\n3. 5 specific design principles this channel should follow\n4. What to change immediately\n5. 3 thumbnail templates to test",
+    system: "You are a thumbnail design expert analyzing performance patterns.",
+    prompt: (ctx, _) => ctx + "\n\nThumbnail Performance Audit:\n1. Patterns in TOP videos\n2. Patterns in BOTTOM videos\n3. 5 design principles to follow\n4. What to change immediately\n5. 3 thumbnail templates to test",
   },
   title_optimizer: {
-    system: "You are a YouTube title expert. Optimize titles for maximum CTR using proven psychological triggers.",
-    prompt: (ctx, topic) => ctx + "\n\nORIGINAL TITLE: " + topic + "\n\nOptimize this title for max CTR:\n1. Show 5 rewrites using different techniques (curiosity, listicle, controversy, story, value-driven)\n2. Pick the BEST one and explain why\n3. List the psychological triggers used\n4. Predict CTR improvement\n5. Suggest matching thumbnail concept",
+    system: "You are a YouTube title expert.",
+    prompt: (ctx, topic) => ctx + "\n\nORIGINAL TITLE: " + topic + "\n\nOptimize:\n1. 5 rewrites (curiosity, listicle, controversy, story, value)\n2. Pick BEST and explain\n3. Psychological triggers used\n4. Predicted CTR improvement\n5. Matching thumbnail concept",
   },
   upload_schedule: {
-    system: "You are a YouTube algorithm expert. Recommend upload schedules based on data patterns.",
-    prompt: (ctx, _) => ctx + "\n\nBased on this channel's performance:\n1. Optimal upload frequency (videos per week)\n2. Best days/times based on audience type\n3. How long videos should be (based on top performers)\n4. Consistency strategy\n5. Sample 4-week content calendar",
+    system: "You are a YouTube algorithm expert.",
+    prompt: (ctx, _) => ctx + "\n\nUpload Strategy:\n1. Optimal frequency\n2. Best days/times for audience type\n3. Optimal video length\n4. Consistency tactics\n5. 4-week content calendar",
   },
   audience_persona: {
-    system: "You are an audience analysis expert. Build detailed viewer personas from video performance patterns.",
-    prompt: (ctx, _) => ctx + "\n\nBuild detailed audience personas based on what content performs:\n1. PRIMARY persona (age, role, interests, pain points)\n2. What they watch for\n3. Why they engage (or don't)\n4. What content would attract MORE of them\n5. 5 specific video ideas tailored to this persona",
+    system: "You are an audience analysis expert.",
+    prompt: (ctx, _) => ctx + "\n\nBuild audience personas:\n1. PRIMARY persona (age, role, interests, pain points)\n2. What they watch for\n3. Why they engage\n4. Content to attract more\n5. 5 video ideas for this persona",
   },
   viral_pattern: {
-    system: "You are a viral content analyst. Identify patterns in successful videos.",
-    prompt: (ctx, _) => ctx + "\n\nAnalyze the TOP 15 videos and find:\n1. Common patterns in titles (words, structures, hooks)\n2. Common patterns in topics covered\n3. Length patterns of viral videos\n4. What separates top 15 from bottom 10\n5. Formula to replicate the success (specific actionable steps)\n6. 5 video ideas using this formula",
+    system: "You are a viral content analyst.",
+    prompt: (ctx, _) => ctx + "\n\nAnalyze TOP videos:\n1. Title patterns (words, structures, hooks)\n2. Topic patterns\n3. Length patterns\n4. What separates top from bottom\n5. Formula to replicate\n6. 5 video ideas using this formula",
   },
   comment_insights: {
     system: "You are an audience insights expert.",
-    prompt: (ctx, _) => ctx + "\n\nBased on engagement patterns (videos with high comments/likes ratios):\n1. What topics generate most discussion\n2. What viewers seem to care about most\n3. Content ideas based on engagement signals\n4. How to encourage more meaningful comments\n5. 5 questions/CTAs to add to next videos",
+    prompt: (ctx, _) => ctx + "\n\nBased on engagement patterns:\n1. Topics that generate discussion\n2. What viewers care about\n3. Content ideas from engagement signals\n4. How to encourage comments\n5. 5 CTAs to add to next videos",
   },
   weekly_report: {
-    system: "You are a YouTube analytics consultant writing executive reports.",
-    prompt: (ctx, _) => ctx + "\n\nWrite a WEEKLY EXECUTIVE REPORT with:\n## Executive Summary (3 bullets)\n## Key Metrics This Period\n## Top Wins\n## Areas of Concern\n## Action Items for Next Week\n## 30-Day Outlook\n\nFormat for executive readability. Use real numbers from the data.",
+    system: "You are a YouTube analytics consultant.",
+    prompt: (ctx, _) => ctx + "\n\nWeekly Executive Report:\n## Executive Summary\n## Key Metrics\n## Top Wins\n## Areas of Concern\n## Action Items\n## 30-Day Outlook",
   },
   improvement_plan: {
-    system: "You are a YouTube growth coach. Create actionable 30-day plans with specific daily tasks.",
-    prompt: (ctx, _) => ctx + "\n\nCreate a 30-DAY IMPROVEMENT PLAN with:\n## Week 1: Foundation (specific daily tasks)\n## Week 2: Content (specific videos to make)\n## Week 3: Optimization (specific videos to update)\n## Week 4: Growth (specific promotion tactics)\n\nEach task should be specific and based on this channel's actual weaknesses. Reference real video titles and metrics.",
+    system: "You are a YouTube growth coach.",
+    prompt: (ctx, _) => ctx + "\n\n30-Day Plan:\n## Week 1: Foundation\n## Week 2: Content\n## Week 3: Optimization\n## Week 4: Growth\nSpecific daily tasks based on real data.",
+  },
+  // NEW TOOLS
+  video_clone: {
+    system: "You are a content cloning expert - help recreate the success patterns of top videos.",
+    prompt: (ctx, topic) => ctx + (topic ? "\n\nVideo to clone: " + topic : "") + "\n\nVIDEO CLONE BLUEPRINT:\n1. Analyze the TOP video's success formula (title structure, length, topic angle)\n2. Identify the 5 key elements that made it work\n3. Generate 7 NEW video ideas using the same formula but different topics\n4. Provide exact title templates\n5. Suggest thumbnail composition\n6. Recommend video structure/script outline",
+  },
+  description_writer: {
+    system: "You are a YouTube SEO description writer.",
+    prompt: (ctx, topic) => ctx + "\n\nVIDEO TITLE: " + (topic || "Use a top performing video") + "\n\nWrite an OPTIMIZED YouTube description:\n1. Hook in first 2 lines (visible in search)\n2. SEO-rich paragraph (3-5 sentences)\n3. Key takeaways/timestamps\n4. Call-to-action\n5. Links section\n6. Hashtags (5-10 relevant)\n7. Tag suggestions (15-20 SEO tags)",
+  },
+  tag_optimizer: {
+    system: "You are a YouTube SEO tag expert.",
+    prompt: (ctx, topic) => ctx + "\n\nVIDEO TOPIC: " + (topic || "Top performing video topic") + "\n\nGenerate optimal tags:\n1. 15 PRIMARY keyword tags (direct matches)\n2. 10 LONG-TAIL keyword tags (specific phrases)\n3. 5 BROAD niche tags\n4. 5 TRENDING tags in this niche\n5. 5 COMPETITOR-style tags\n6. SEO strategy explanation\n7. Tags to AVOID (over-saturated)",
+  },
+  channel_swot: {
+    system: "You are a YouTube strategist conducting SWOT analysis.",
+    prompt: (ctx, _) => ctx + "\n\nCHANNEL SWOT ANALYSIS:\n\n## STRENGTHS\n- Top performing content patterns\n- Engagement strengths\n- Audience loyalty signals\n\n## WEAKNESSES\n- Underperforming areas\n- Engagement gaps\n- Content gaps\n\n## OPPORTUNITIES\n- Untapped niches\n- Format opportunities (Shorts, Live, etc)\n- Trending topics\n\n## THREATS\n- Algorithm risks\n- Competitor moves\n- Niche saturation\n\n## STRATEGIC PRIORITIES (next 90 days)\n5 specific actions ranked by impact",
+  },
+  ab_test_planner: {
+    system: "You are a YouTube A/B testing expert.",
+    prompt: (ctx, topic) => ctx + "\n\nTITLE TO TEST: " + (topic || "Best performing video") + "\n\nCREATE A/B TEST PLAN:\n1. 3 title variations (different psychological angles)\n2. 3 thumbnail concept descriptions\n3. Hypothesis for each variation\n4. Success metrics to track\n5. Test duration recommendation\n6. How to interpret results\n7. Winner implementation strategy",
   },
 };
 
@@ -135,9 +149,8 @@ export async function POST(req: NextRequest) {
     if (!tool || !TOOL_PROMPTS[tool]) {
       return safeJson({ success: false, error: "Unknown tool: " + tool });
     }
-
     if (!hasAI()) {
-      return safeJson({ success: false, error: "AI not configured (need GROQ_API_KEY or OPENAI_API_KEY)" });
+      return safeJson({ success: false, error: "AI not configured" });
     }
 
     let channel: any = null;
@@ -165,7 +178,6 @@ export async function POST(req: NextRequest) {
     const result = await callAI(prompt(ctx, topic), system);
 
     if (!result) return safeJson({ success: false, error: "AI returned empty result" });
-
     return safeJson({ success: true, result, tool });
   } catch (e: any) {
     return safeJson({ success: false, error: String(e?.message || e) });

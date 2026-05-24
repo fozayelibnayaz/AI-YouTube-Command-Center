@@ -18,13 +18,12 @@ async function fetchAnalytics(params: Record<string, string>): Promise<any> {
   const token = await getValidAccessToken();
   if (!token) throw new Error("Not authenticated");
   if (!params.ids) params.ids = await getChannelFilter();
-
   const url = ANALYTICS_BASE + "?" + new URLSearchParams(params).toString();
   const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
   const data = await res.json();
   if (data.error) {
     console.error("Analytics API error:", data.error.message);
-    throw new Error(data.error.message || "Analytics API error");
+    throw new Error(data.error.message);
   }
   return data;
 }
@@ -44,14 +43,11 @@ export async function getVideoAnalytics(videoId: string, startDate?: string, end
     const data = await fetchAnalytics({
       startDate: startDate || dateString(90),
       endDate: endDate || dateString(0),
-      metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost",
-      dimensions: "video",
-      filters: "video==" + videoId,
+      metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost,videosAddedToPlaylists,videosRemovedFromPlaylists",
+      dimensions: "video", filters: "video==" + videoId,
     });
     return parseRows(data)[0] || null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export async function getRetentionCurve(videoId: string): Promise<any[]> {
@@ -84,23 +80,16 @@ export async function getDemographics(startDate?: string, endDate?: string): Pro
   const start = startDate || dateString(90);
   const end = endDate || dateString(0);
   try {
-    const [ageGender, geography, devices] = await Promise.all([
-      fetchAnalytics({
-        startDate: start, endDate: end,
-        metrics: "viewerPercentage", dimensions: "ageGroup,gender",
-      }).then(parseRows).catch(() => []),
-      fetchAnalytics({
-        startDate: start, endDate: end,
-        metrics: "views", dimensions: "country", sort: "-views", maxResults: "10",
-      }).then(parseRows).catch(() => []),
-      fetchAnalytics({
-        startDate: start, endDate: end,
-        metrics: "views,estimatedMinutesWatched", dimensions: "deviceType",
-      }).then(parseRows).catch(() => []),
+    const [ageGender, geography, devices, os, language] = await Promise.all([
+      fetchAnalytics({ startDate: start, endDate: end, metrics: "viewerPercentage", dimensions: "ageGroup,gender" }).then(parseRows).catch(() => []),
+      fetchAnalytics({ startDate: start, endDate: end, metrics: "views,estimatedMinutesWatched", dimensions: "country", sort: "-views", maxResults: "20" }).then(parseRows).catch(() => []),
+      fetchAnalytics({ startDate: start, endDate: end, metrics: "views,estimatedMinutesWatched", dimensions: "deviceType" }).then(parseRows).catch(() => []),
+      fetchAnalytics({ startDate: start, endDate: end, metrics: "views", dimensions: "operatingSystem", sort: "-views", maxResults: "10" }).then(parseRows).catch(() => []),
+      fetchAnalytics({ startDate: start, endDate: end, metrics: "views", dimensions: "subscribedStatus" }).then(parseRows).catch(() => []),
     ]);
-    return { ageGender, geography, devices };
+    return { ageGender, geography, devices, os, subscribedStatus: language };
   } catch (e) {
-    return { ageGender: [], geography: [], devices: [], error: String(e) };
+    return { ageGender: [], geography: [], devices: [], os: [], subscribedStatus: [], error: String(e) };
   }
 }
 
@@ -121,7 +110,7 @@ export async function getDailyViews(startDate?: string, endDate?: string): Promi
     const data = await fetchAnalytics({
       startDate: startDate || dateString(30),
       endDate: endDate || dateString(0),
-      metrics: "views,estimatedMinutesWatched,averageViewDuration,likes,comments",
+      metrics: "views,estimatedMinutesWatched,averageViewDuration,likes,comments,shares,subscribersGained",
       dimensions: "day", sort: "day",
     });
     return parseRows(data);
@@ -139,6 +128,18 @@ export async function getRevenue(startDate?: string, endDate?: string): Promise<
   } catch { return null; }
 }
 
+export async function getRevenueDaily(startDate?: string, endDate?: string): Promise<any[]> {
+  try {
+    const data = await fetchAnalytics({
+      startDate: startDate || dateString(30),
+      endDate: endDate || dateString(0),
+      metrics: "estimatedRevenue,cpm,adImpressions",
+      dimensions: "day", sort: "day",
+    });
+    return parseRows(data);
+  } catch { return []; }
+}
+
 export async function getTopVideos(metric: string = "views", startDate?: string, endDate?: string, max: number = 10): Promise<any[]> {
   try {
     const data = await fetchAnalytics({
@@ -150,7 +151,6 @@ export async function getTopVideos(metric: string = "views", startDate?: string,
   } catch { return []; }
 }
 
-// ⚡ EXPORTED - this was missing and broke the build
 export async function getSearchTerms(videoId?: string, startDate?: string, endDate?: string): Promise<any[]> {
   try {
     const params: any = {
@@ -159,11 +159,49 @@ export async function getSearchTerms(videoId?: string, startDate?: string, endDa
       metrics: "views",
       dimensions: "insightTrafficSourceDetail",
       filters: "insightTrafficSourceType==YT_SEARCH",
-      sort: "-views",
-      maxResults: "25",
+      sort: "-views", maxResults: "50",
     };
     if (videoId) params.filters += ";video==" + videoId;
     const data = await fetchAnalytics(params);
+    return parseRows(data);
+  } catch { return []; }
+}
+
+export async function getViewsByPlayback(startDate?: string, endDate?: string): Promise<any[]> {
+  try {
+    const data = await fetchAnalytics({
+      startDate: startDate || dateString(30),
+      endDate: endDate || dateString(0),
+      metrics: "views,estimatedMinutesWatched",
+      dimensions: "insightPlaybackLocationType",
+      sort: "-views",
+    });
+    return parseRows(data);
+  } catch { return []; }
+}
+
+export async function getSharingService(startDate?: string, endDate?: string): Promise<any[]> {
+  try {
+    const data = await fetchAnalytics({
+      startDate: startDate || dateString(30),
+      endDate: endDate || dateString(0),
+      metrics: "shares",
+      dimensions: "sharingService",
+      sort: "-shares", maxResults: "20",
+    });
+    return parseRows(data);
+  } catch { return []; }
+}
+
+export async function getPlaylistAnalytics(startDate?: string, endDate?: string): Promise<any[]> {
+  try {
+    const data = await fetchAnalytics({
+      startDate: startDate || dateString(30),
+      endDate: endDate || dateString(0),
+      metrics: "views,estimatedMinutesWatched,averageViewDuration,playlistStarts,viewsPerPlaylistStart,averageTimeInPlaylist",
+      dimensions: "playlist",
+      sort: "-views", maxResults: "25",
+    });
     return parseRows(data);
   } catch { return []; }
 }
@@ -172,7 +210,6 @@ async function getBatchCore(videoIds: string[], startDate: string, endDate: stri
   const result: Record<string, any> = {};
   if (videoIds.length === 0) return result;
   const batchSize = 50;
-
   for (let i = 0; i < videoIds.length; i += batchSize) {
     const batch = videoIds.slice(i, i + batchSize);
     const filter = "video==" + batch.join(",");
@@ -184,9 +221,7 @@ async function getBatchCore(videoIds: string[], startDate: string, endDate: stri
       });
       const rows = parseRows(data);
       for (const r of rows) result[r.video] = r;
-    } catch (e) {
-      console.error("Core batch failed:", e);
-    }
+    } catch (e) { console.error("Core batch failed:", e); }
   }
   return result;
 }
@@ -195,7 +230,6 @@ async function getBatchCardMetrics(videoIds: string[], startDate: string, endDat
   const result: Record<string, any> = {};
   if (videoIds.length === 0) return result;
   const batchSize = 30;
-
   for (let i = 0; i < videoIds.length; i += batchSize) {
     const batch = videoIds.slice(i, i + batchSize);
     const filter = "video==" + batch.join(",");
@@ -222,12 +256,10 @@ export async function getBatchVideoAnalytics(videoIds: string[], startDate?: str
   if (videoIds.length === 0) return {};
   const start = startDate || dateString(90);
   const end = endDate || dateString(0);
-
   const [core, cards] = await Promise.all([
     getBatchCore(videoIds, start, end),
     getBatchCardMetrics(videoIds, start, end),
   ]);
-
   const result: Record<string, any> = {};
   for (const id of videoIds) {
     const c = core[id];
@@ -238,10 +270,8 @@ export async function getBatchVideoAnalytics(videoIds: string[], startDate?: str
         cardImpressions: card?.cardImpressions || null,
         cardClicks: card?.cardClicks || null,
         cardCTR: card?.cardCTR ?? null,
-        ctr: null,
-        impressions: null,
-        period_start: start,
-        period_end: end,
+        ctr: null, impressions: null,
+        period_start: start, period_end: end,
       };
     }
   }
