@@ -40,16 +40,16 @@ function parseRows(data: any): any[] {
 }
 
 export async function getVideoAnalytics(videoId: string, startDate?: string, endDate?: string): Promise<any> {
-  const start = startDate || dateString(90);
-  const end = endDate || dateString(0);
   try {
     const data = await fetchAnalytics({
-      startDate: start, endDate: end,
+      startDate: startDate || dateString(90),
+      endDate: endDate || dateString(0),
       metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost",
-      dimensions: "video", filters: "video==" + videoId,
+      dimensions: "video",
+      filters: "video==" + videoId,
     });
     return parseRows(data)[0] || null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -150,6 +150,24 @@ export async function getTopVideos(metric: string = "views", startDate?: string,
   } catch { return []; }
 }
 
+// ⚡ EXPORTED - this was missing and broke the build
+export async function getSearchTerms(videoId?: string, startDate?: string, endDate?: string): Promise<any[]> {
+  try {
+    const params: any = {
+      startDate: startDate || dateString(30),
+      endDate: endDate || dateString(0),
+      metrics: "views",
+      dimensions: "insightTrafficSourceDetail",
+      filters: "insightTrafficSourceType==YT_SEARCH",
+      sort: "-views",
+      maxResults: "25",
+    };
+    if (videoId) params.filters += ";video==" + videoId;
+    const data = await fetchAnalytics(params);
+    return parseRows(data);
+  } catch { return []; }
+}
+
 async function getBatchCore(videoIds: string[], startDate: string, endDate: string): Promise<Record<string, any>> {
   const result: Record<string, any> = {};
   if (videoIds.length === 0) return result;
@@ -202,7 +220,6 @@ async function getBatchCardMetrics(videoIds: string[], startDate: string, endDat
 
 export async function getBatchVideoAnalytics(videoIds: string[], startDate?: string, endDate?: string): Promise<Record<string, any>> {
   if (videoIds.length === 0) return {};
-
   const start = startDate || dateString(90);
   const end = endDate || dateString(0);
 
