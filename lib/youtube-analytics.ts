@@ -202,7 +202,16 @@ export async function getPlaylistAnalytics(startDate?: string, endDate?: string)
       dimensions: "playlist",
       sort: "-views", maxResults: "25",
     });
-    return parseRows(data);
+    const rows = parseRows(data);
+    // V15: Auto-merge playlist titles
+    const ids = rows.map((r: any) => r.playlist).filter(Boolean);
+    if (ids.length > 0) {
+      try {
+        const titles = await getPlaylistTitles(ids);
+        return rows.map((r: any) => ({ ...r, playlist_title: titles[r.playlist] || r.playlist }));
+      } catch { return rows; }
+    }
+    return rows;
   } catch { return []; }
 }
 
@@ -276,4 +285,30 @@ export async function getBatchVideoAnalytics(videoIds: string[], startDate?: str
     }
   }
   return result;
+}
+
+// ═══════════════════════════════════════════════
+// V15: Fetch playlist titles (Analytics API only gives IDs)
+// ═══════════════════════════════════════════════
+export async function getPlaylistTitles(playlistIds: string[]): Promise<Record<string, string>> {
+  const API_KEY = process.env.YOUTUBE_API_KEY;
+  if (!API_KEY || !playlistIds.length) return {};
+  const titles: Record<string, string> = {};
+  for (let i = 0; i < playlistIds.length; i += 50) {
+    const batch = playlistIds.slice(i, i + 50).join(",");
+    try {
+      const res = await fetch(
+        "https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=" + batch + "&maxResults=50&key=" + API_KEY
+      );
+      const data = await res.json();
+      if (data.items) {
+        for (const p of data.items) {
+          titles[p.id] = p.snippet?.title || p.id;
+        }
+      }
+    } catch (e) {
+      console.error("Playlist title fetch failed:", e);
+    }
+  }
+  return titles;
 }

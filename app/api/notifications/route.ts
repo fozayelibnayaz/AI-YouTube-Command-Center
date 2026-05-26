@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getChannelVideos, getChannelInfo } from "@/lib/youtube";
 import { calculatePerformanceScore } from "@/lib/utils";
-import { detectEvents, loadSnapshot, saveSnapshot } from "@/lib/notification-engine";
+import { detectEvents, loadSnapshot, saveSnapshot } from "@/lib/smart-notifications";
 import { sendTelegram, sendWithButtons } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";

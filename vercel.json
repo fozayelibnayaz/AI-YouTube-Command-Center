@@ -1,8 +1,8 @@
 {
   "crons": [
-    {
-      "path": "/api/notifications?send=true",
-      "schedule": "55 17 * * *"
-    }
+    { "path": "/api/notifications?send=true", "schedule": "0 */6 * * *" },
+    { "path": "/api/notifications/digest?type=daily&send=true", "schedule": "0 12 * * *" },
+    { "path": "/api/notifications/digest?type=weekly&send=true", "schedule": "0 4 * * 1" },
+    { "path": "/api/notifications/digest?type=monthly&send=true", "schedule": "0 4 1 * *" }
   ]
 }

@@ -469,7 +469,7 @@ function PlaylistsCard({ playlists }: any) {
           <tbody>
             {playlists.slice(0, 10).map((p: any, i: number) => (
               <tr key={i} className="border-b border-white/5">
-                <td className="py-2 text-gray-300 truncate max-w-xs">{p.playlist}</td>
+                <td className="py-2 text-gray-300 truncate max-w-xs">{p.playlist_title || p.playlist}</td>
                 <td className="py-2 text-right text-white">{formatNumber(p.views || 0)}</td>
                 <td className="py-2 text-right text-white">{Math.round(p.estimatedMinutesWatched || 0)}</td>
                 <td className="py-2 text-right text-cyan-400">{Math.round(p.averageTimeInPlaylist || 0)}s</td>
