@@ -1,0 +1,27 @@
+name: YouTube Notifications
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # manual trigger
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Smart Alerts
+        run: |
+          echo "Triggering smart alerts..."
+          curl -s "https://youtube-command-center-eight.vercel.app/api/notifications?send=true" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          print(f'Events: {d[\"eventsDetected\"]}')
+          print(f'Sent: {d.get(\"sent\",0)}')
+          print(f'Success: {d.get(\"sentSuccess\",0)}')
+          types={}
+          for r in d.get('sentResults',[]):
+              types[r['type']]=types.get(r['type'],0)+1
+          print('Types sent:')
+          for t,c in sorted(types.items()):
+              print(f'  {t}: {c}x')
+          "
