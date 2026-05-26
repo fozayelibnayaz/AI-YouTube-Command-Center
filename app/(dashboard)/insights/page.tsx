@@ -3,7 +3,8 @@ import { useState } from "react";
 import {
   Brain, TrendingUp, Target, Lightbulb, BarChart3, FileText,
   Copy, Check, Loader2, Sparkles, Calendar, Users, MessageCircle, Zap,
-  Copy as CopyIcon, Tag, BookOpen, Compass, GitBranch
+  Copy as CopyIcon, Tag, BookOpen, Compass, GitBranch,
+  Mic, Film, Scissors, ListOrdered, Mail, Megaphone, Reply, MousePointerClick, Radar, KeyRound, ClipboardCheck, DollarSign, Handshake, Layers, Cpu
 } from "lucide-react";
 
 interface Tool {
@@ -34,6 +35,22 @@ const TOOLS: Tool[] = [
   { id: "tag_optimizer", name: "Tag Optimizer", icon: Tag, color: "cyan", description: "Generate optimal SEO tags", needsTopic: true, topicLabel: "Video topic", topicPlaceholder: "What's the video about?" },
   { id: "channel_swot", name: "Channel SWOT Analysis", icon: Compass, color: "orange", description: "Strengths, Weaknesses, Opportunities, Threats" },
   { id: "ab_test_planner", name: "A/B Test Planner", icon: GitBranch, color: "pink", description: "Plan title/thumbnail tests", needsTopic: true, topicLabel: "Title to test", topicPlaceholder: "Title for A/B testing" },
+  // 15 NEW TOOLS V15
+  { id: "hook_generator", name: "Hook Generator", icon: Mic, color: "purple", description: "First 15s hooks that retain", needsTopic: true, topicLabel: "Video topic", topicPlaceholder: "What's the video about?" },
+  { id: "script_writer", name: "Full Script Writer", icon: Film, color: "blue", description: "Complete video scripts", needsTopic: true, topicLabel: "Video topic" },
+  { id: "shorts_ideas", name: "Shorts Ideas", icon: Scissors, color: "pink", description: "Viral shorts from your videos" },
+  { id: "chapter_generator", name: "Auto Chapters", icon: ListOrdered, color: "cyan", description: "Timestamp chapters for SEO", needsTopic: true, topicLabel: "Video title" },
+  { id: "sponsor_pitch", name: "Sponsor Pitch", icon: Mail, color: "green", description: "Brand outreach emails", needsTopic: true, topicLabel: "Target brand (optional)" },
+  { id: "community_post", name: "Community Posts", icon: Megaphone, color: "orange", description: "High-engagement posts" },
+  { id: "comment_replier", name: "Smart Reply", icon: Reply, color: "indigo", description: "Reply to comments", needsTopic: true, topicLabel: "Comment to reply" },
+  { id: "cta_generator", name: "CTA Generator", icon: MousePointerClick, color: "yellow", description: "Convert viewers to subs", needsTopic: true, topicLabel: "Video topic" },
+  { id: "trend_radar", name: "Trend Radar", icon: Radar, color: "red", description: "Trending topics now", needsTopic: true, topicLabel: "Your niche" },
+  { id: "keyword_finder", name: "Keyword Finder", icon: KeyRound, color: "purple", description: "Low-comp keywords", needsTopic: true, topicLabel: "Topic" },
+  { id: "channel_audit", name: "Full Channel Audit", icon: ClipboardCheck, color: "blue", description: "Complete A-F review" },
+  { id: "revenue_forecast", name: "Revenue Forecast", icon: DollarSign, color: "green", description: "Predict earnings" },
+  { id: "collab_finder", name: "Collab Finder", icon: Handshake, color: "cyan", description: "Channels to collab with" },
+  { id: "niche_analyzer", name: "Niche Analyzer", icon: Layers, color: "orange", description: "Niche saturation check", needsTopic: true, topicLabel: "Niche (optional)" },
+  { id: "algorithm_decoder", name: "Algorithm Decoder", icon: Cpu, color: "pink", description: "What YT favors now" },
 ];
 
 export default function InsightsPage() {

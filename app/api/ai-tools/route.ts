@@ -77,6 +77,67 @@ function buildChannelContext(videos: any[], channel: any): string {
 }
 
 const TOOL_PROMPTS: Record<string, { system: string; prompt: (ctx: string, topic: string) => string }> = {
+  hook_generator: {
+    system: "You are a YouTube hook expert. Write irresistible first 15 seconds.",
+    prompt: (ctx, topic) => ctx + "\n\nVIDEO TOPIC: " + topic + "\n\nWrite 6 powerful hooks (15s each):\n1. Curiosity gap\n2. Shocking stat\n3. Story-based\n4. Direct value\n5. Controversial\n6. MrBeast-style\n\nFor each include: hook script, why it works, retention impact",
+  },
+  script_writer: {
+    system: "You are a YouTube script writer. Write full retention-optimized scripts.",
+    prompt: (ctx, topic) => ctx + "\n\nVIDEO TOPIC: " + topic + "\n\nWrite complete script:\n1. Hook (0-15s)\n2. Promise (15-30s)\n3. Main content (broken into 3-5 sections with pattern interrupts)\n4. CTA mid-roll\n5. Strong outro with end-screen prompts\n\nInclude B-roll suggestions and pacing notes.",
+  },
+  shorts_ideas: {
+    system: "You are a YouTube Shorts viral expert.",
+    prompt: (ctx, _) => ctx + "\n\nGenerate 15 Shorts ideas from existing content:\n1. Hook line\n2. 30-60s script\n3. Hashtags\n4. Best source video to clip from\n5. Viral potential score (1-10)",
+  },
+  chapter_generator: {
+    system: "You are a YouTube SEO and chapter optimization expert.",
+    prompt: (ctx, topic) => ctx + "\n\nVIDEO: " + topic + "\n\nGenerate optimal chapter timestamps:\n1. 6-10 chapters with timestamps\n2. SEO-rich chapter titles\n3. Description format\n4. Why these chapters boost retention",
+  },
+  sponsor_pitch: {
+    system: "You are a brand partnership expert writing sponsor pitch emails.",
+    prompt: (ctx, topic) => ctx + "\n\nTARGET BRAND: " + (topic || "any relevant brand") + "\n\nWrite professional sponsor pitch:\n1. Subject line (5 variations)\n2. Opening hook\n3. Channel stats highlight\n4. Audience demographics\n5. Past success metrics\n6. Specific deal proposal\n7. CTA",
+  },
+  community_post: {
+    system: "You are a YouTube community engagement expert.",
+    prompt: (ctx, _) => ctx + "\n\nGenerate 10 high-engagement community posts:\n1. Polls (3)\n2. Questions (3)\n3. Image/quote ideas (2)\n4. Announcements (2)\n\nEach with engagement strategy and best posting time.",
+  },
+  comment_replier: {
+    system: "You are a YouTube community manager.",
+    prompt: (ctx, topic) => ctx + "\n\nCOMMENT TO REPLY TO: " + topic + "\n\nGenerate 5 reply options:\n1. Friendly + question\n2. Thank you + CTA\n3. Funny/witty\n4. Detailed value-add\n5. Pin-worthy response\n\nPick best and explain why.",
+  },
+  cta_generator: {
+    system: "You are a conversion optimization expert.",
+    prompt: (ctx, topic) => ctx + "\n\nVIDEO TOPIC: " + topic + "\n\nGenerate 10 CTAs:\n1. Subscribe CTAs (3)\n2. Like CTAs (2)\n3. Comment CTAs (2)\n4. Watch next CTAs (2)\n5. External link CTA (1)\n\nInclude timing and delivery style.",
+  },
+  trend_radar: {
+    system: "You are a YouTube trend analyst.",
+    prompt: (ctx, topic) => ctx + "\n\nNICHE: " + (topic || "this channel's niche") + "\n\nIdentify trends:\n1. 5 rising topics (next 30 days)\n2. 5 declining topics to avoid\n3. Seasonal opportunities\n4. Format trends (Shorts, long-form, live)\n5. 10 specific video ideas to capitalize NOW",
+  },
+  keyword_finder: {
+    system: "You are a YouTube SEO and keyword research expert.",
+    prompt: (ctx, topic) => ctx + "\n\nTOPIC: " + topic + "\n\nFind low-competition keywords:\n1. 10 long-tail keywords\n2. Search volume estimate\n3. Competition level\n4. Suggested title using each\n5. Related hashtags\n6. Top 3 priority keywords to target",
+  },
+  channel_audit: {
+    system: "You are a YouTube channel auditor doing a complete review.",
+    prompt: (ctx, _) => ctx + "\n\nComplete Channel Audit:\n1. Branding (logo, banner, about)\n2. Content quality patterns\n3. Upload consistency\n4. SEO health\n5. Engagement health\n6. Monetization readiness\n7. Critical issues (top 5)\n8. Quick wins (top 10)\n9. Long-term recommendations\n10. Overall grade A-F",
+  },
+  revenue_forecast: {
+    system: "You are a YouTube monetization expert.",
+    prompt: (ctx, _) => ctx + "\n\nRevenue Forecast:\n1. Current estimated monthly revenue\n2. 3-month projection\n3. 6-month projection\n4. 12-month projection\n5. Required views to hit $1000/mo\n6. CPM estimates by niche\n7. Additional revenue streams\n8. Action plan to 10x revenue",
+  },
+  collab_finder: {
+    system: "You are a YouTube collaboration strategist.",
+    prompt: (ctx, _) => ctx + "\n\nCollaboration Opportunities:\n1. 10 similar-sized channels to collab with\n2. 5 bigger channels (long-shot collabs)\n3. Collab format ideas (5)\n4. Outreach template\n5. Win-win value propositions",
+  },
+  niche_analyzer: {
+    system: "You are a YouTube niche research expert.",
+    prompt: (ctx, topic) => ctx + "\n\nNICHE: " + (topic || "current niche") + "\n\nNiche analysis:\n1. Saturation level (1-10)\n2. Audience size\n3. Avg revenue potential\n4. Top 5 dominant channels\n5. Gaps in market\n6. Sub-niches to dominate\n7. Should you stay or pivot?\n8. 5 angle differentiators",
+  },
+  algorithm_decoder: {
+    system: "You are a YouTube algorithm expert decoding current ranking factors.",
+    prompt: (ctx, _) => ctx + "\n\nDecode YouTube algorithm for this channel:\n1. Current ranking factors (2025)\n2. What YT is favoring NOW\n3. What's being penalized\n4. CTR vs Retention priorities\n5. Session time importance\n6. Specific actions to align with algorithm\n7. Common mistakes this channel may be making\n8. 30-day algorithm-aligned strategy",
+  },
+
   content_strategy: {
     system: "You are a YouTube growth strategist. Create specific strategies using REAL channel data.",
     prompt: (ctx, _) => ctx + "\n\nCreate a 90-day content strategy:\n1. Top 3 themes that work\n2. 10 specific video ideas\n3. Optimal video length\n4. Series ideas\n5. Topics to AVOID",
